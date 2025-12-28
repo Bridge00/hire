@@ -25,7 +25,8 @@ class PipelineRunner:
         Returns:
             List of result dictionaries.
         """
-        results = []
+        exec_results = []
+        llm_eval_results = []
         
         # Iterate over the dataset
         # CodeData __getitem__ returns: task_id, prompt, tests, canonical_solution
@@ -47,13 +48,9 @@ class PipelineRunner:
             # 1. Generate
             code = self.generator.generate(prompt)
             
-            if self.evaluator is None:
-                continue
 
             code = ul.clean_code(code)  
-            # 2. Evaluate (LLM)
-            llm_evaluation = self.evaluator.evaluate(prompt, code)
-            
+             
             # 3. Execution Metrics (with Cache)
             execution_metrics = {}
             if tests:
@@ -63,17 +60,28 @@ class PipelineRunner:
                         "feedback": feedback,
                         "pass_rate": sum(state) / len(state) if state else 0.0
                 }
-
-
-            # 4. Store
-            result = {
+            # exec_result = {
+            #     "task_id": task_id,
+            #     "prompt": prompt,
+            #     "generated_code": code,
+            #     "canonical_solution": canonical_solution,
+            #     "execution_metrics": execution_metrics
+            # }
+            # exec_results.append(exec_result)
+            # 2. Evaluate (LLM)
+            if self.evaluator is None:
+                continue
+            llm_evaluation = self.evaluator.evaluate(prompt, code)
+            llm_eval_result = {
                 "task_id": task_id,
                 "prompt": prompt,
                 "generated_code": code,
                 "canonical_solution": canonical_solution,
-                "LLM_evaluation": llm_evaluation,
-                "execution_metrics": execution_metrics
+                "llm_evaluation": llm_evaluation
             }
-            results.append(result)
+            llm_eval_results.append(llm_eval_result)
+            # 4. Store
+
             
-        return results
+            
+        return llm_eval_results
