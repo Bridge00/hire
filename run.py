@@ -1,8 +1,7 @@
 import argparse
 import sys
 import os
-from experiments.pipeline import PipelineRunner
-from experiments.factory import get_dataset, get_generator, get_evaluator
+from src.pipeline import PipelineRunner
 
 def main():
     parser = argparse.ArgumentParser(description="Run experiment pipeline.")

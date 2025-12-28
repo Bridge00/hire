@@ -6,7 +6,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from src.generator import CodeGenerator
 from src.evaluator import Evaluator
-from experiments.pipeline import PipelineRunner
+from src.pipeline import PipelineRunner
 
 # Mock Implementations
 class MockGenerator(CodeGenerator):
