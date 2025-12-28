@@ -15,32 +15,41 @@ class PipelineRunner:
         self.generator = generator
         self.evaluator = evaluator
 
-    def run_experiment(self, dataset: List[Dict[str, str]]) -> List[Dict[str, Any]]:
+    def run_experiment(self, dataset) -> List[Dict[str, Any]]:
         """
         Runs the experiment on the dataset.
         
         Args:
-            dataset: List of dicts, each must have a "prompt" key.
+            dataset: CodeData instances
             
         Returns:
             List of result dictionaries.
         """
         results = []
         
+        # Iterate over the dataset
+        # CodeData __getitem__ returns: task_id, prompt, tests, canonical_solution
         for i, item in enumerate(dataset):
-            prompt = item.get("prompt")
-            tests = item.get("tests", [])
             
+            # Unpack item based on expected format
+            if isinstance(item, tuple) and len(item) >= 3:
+                task_id, prompt, tests = item[0], item[1], item[2]
+                canonical_solution = item[3] if len(item) > 3 else None
+            else:
+                print(f"Skipping item {i}: unknown format {type(item)}")
+                continue
+
             if not prompt:
                 continue
                 
-            print(f"Processing item {i}...")
+            print(f"Processing task {i} out of {len(dataset)} : Task ID: {task_id}...")
             
             # 1. Generate
             code = self.generator.generate(prompt)
             
             if self.evaluator is None:
                 continue
+                
             # 2. Evaluate (LLM)
             llm_evaluation = self.evaluator.evaluate(prompt, code)
             
@@ -52,14 +61,15 @@ class PipelineRunner:
                         "state": state,
                         "feedback": feedback,
                         "pass_rate": sum(state) / len(state) if state else 0.0
-                    }
+                }
 
 
             # 4. Store
             result = {
-                "item_index": i,
+                "task_id": task_id,
                 "prompt": prompt,
                 "generated_code": code,
+                "canonical_solution": canonical_solution,
                 "LLM_evaluation": llm_evaluation,
                 "execution_metrics": execution_metrics
             }

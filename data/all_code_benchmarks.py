@@ -46,12 +46,7 @@ class CodeData(Dataset):
 
     def __getitem__(self, index):
         row = self.dataset[index]
-        task_id = row["task_id"]
-        prompt = row["prompt"]
-        tests = row["test"]
-        canonical_solution = row['canonical_solution']
-
-        return task_id, prompt, tests, canonical_solution
+        return row["task_id"], row["prompt"], row["test"], row['canonical_solution']
 
     def __len__(self):
         return len(self.dataset)
