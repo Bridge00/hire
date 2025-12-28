@@ -2,12 +2,12 @@ import platformdirs
 from .base import Dataset
 import os
 import json
-
+from dotenv import load_dotenv
+load_dotenv()
 
 class CodeData(Dataset):
     def __init__(self, task_name: str = None):
         # if root is None:
-        root = platformdirs.user_cache_dir("textgrad")
 
         #self.root = root
         if task_name.lower() == "leetcode": #f"{self.root}/leetcode-hard.jsonl"
@@ -20,7 +20,7 @@ class CodeData(Dataset):
             self.data_path = f'core_eval.jsonl'#'leetcode-hard.json'
         else:
             self.data_path = task_name.lower() + '.jsonl'
-        self.data_path = os.path.join('data', self.data_path)
+        self.data_path = os.path.join(os.getenv("DATA_DIR"), self.data_path)
         print('loading', self.data_path)
         self._check_or_download_dataset()
 

@@ -1,8 +1,7 @@
 import os
 import hashlib
 import json
-from together import Together
-from openai import OpenAI
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -16,8 +15,8 @@ OPENAI_MODELS = [
     "gpt-4o-mini",
 ]
 
-CACHE_DIR = os.path.join(os.getcwd(), ".cache")
-os.makedirs(CACHE_DIR, exist_ok=True)
+
+os.makedirs(os.getenv("CACHE_DIR"), exist_ok=True)
 
 def _get_cache_key(sys_prompt: str, user_prompt: str, model: str) -> str:
     unique_str = f"{model}:{sys_prompt}:{user_prompt}"
@@ -27,9 +26,10 @@ def get_llm_response(sys_prompt: str, user_prompt: str, model : str ) -> str:
     
     # Check cache
     cache_key = _get_cache_key(sys_prompt, user_prompt, model)
-    cache_path = os.path.join(CACHE_DIR, f"{cache_key}.json")
-    
+    cache_path = os.path.join(os.getenv("CACHE_DIR"), f"{cache_key}.json")
+    print(cache_path)
     if os.path.exists(cache_path):
+        print('reading in cache data')
         with open(cache_path, "r", encoding="utf-8") as f:
             return json.load(f)["content"]
 

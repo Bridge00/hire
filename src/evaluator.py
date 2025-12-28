@@ -1,5 +1,5 @@
-from abc import ABC, abstractmethod
 from typing import Dict, Any
+from utils.llm import get_llm_response
 
 class Evaluator:
 
@@ -17,6 +17,4 @@ class Evaluator:
         Returns:
             A dictionary containing evaluation metrics (e.g., {"score": 1.0, "is_correct": True}).
         """
-      return get_llm_response(sys_prompt=sys_prompt, 
-                        user_prompt=user_prompt, 
-                        model=self.model)
+        return get_llm_response(sys_prompt=sys_prompt, user_prompt=user_prompt, model=self.model)
