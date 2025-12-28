@@ -45,8 +45,8 @@ def main():
         dataset = get_dataset(args.dataset)
         
         # 2. Setup Components
-        generator = get_generator(args.code_gen_model)
-        evaluator = get_evaluator(args.evaluation_method, args.eval_model, args.hire)
+        generator = CodeGenerator(args.code_gen_model)
+        evaluator = Evaluator(args.eval_model, args.hire)
         
         # 3. Initialize Pipeline
         runner = PipelineRunner(generator, evaluator)
