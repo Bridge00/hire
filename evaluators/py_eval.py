@@ -33,13 +33,13 @@ class PythonEvaluator:
             function_name_string = code[def_index:paran_index].split()[1]
             #print(function_name_string)
             tests = [test.replace('candidate', function_name_string) for test in tests if 'assert' in test]
-            func_test_list = [f'from typing import *\n{code}\n\n \n\n{test}' for test in tests]
+            #func_test_list = [f'from typing import *\n{code}\n\n \n\n{test}' for test in tests]
             #print(tests)
             #print(func_test_list)
-        else:
+        #else:
             #print('in another function')
-            func_test_list = [f'from typing import *\n{code}\n\n{test}' for test in tests]
-            print('test')
+        func_test_list = [f'from typing import *\n{code}\n\n{test}' for test in tests]
+        print('test')
         success_tests = []
         failed_tests = []
         num_tests = len(func_test_list)

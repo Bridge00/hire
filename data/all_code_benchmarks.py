@@ -47,10 +47,10 @@ class CodeData(Dataset):
     def __getitem__(self, index):
         row = self.dataset[index]
      
-        if "evoeval" in self.data_path.lower():
-            tests = row["inputs"]
-        else:
-            tests = row["test"]
+        # if "evoeval" in self.data_path.lower():
+        #     tests = row["inputs"]
+        # else:
+        tests = row["test"]
         return row["task_id"], row["prompt"], tests, row['canonical_solution']
 
     def __len__(self):
