@@ -24,9 +24,9 @@ def main():
     parser = argparse.ArgumentParser(description="Run experiment pipeline.")
     
     parser.add_argument("--dataset", type=str, required=True, help="Name of the dataset to use (e.g., 'dummy')")
-    parser.add_argument("--evaluation_method", type=str, required=True, help="Base evaluation method (e.g., 'vanilla', 'codejudge')")
+    parser.add_argument("--evaluation_method", type=str, required=False, help="Base evaluation method (e.g., 'vanilla', 'codejudge')")
     parser.add_argument("--code_gen_model", type=str, required=True, help="Model to use (e.g., 'gpt-4o', 'gpt-4o-mini', 'Qwen/Qwen3-8B-Base')")
-    parser.add_argument("--eval_model", type=str, required=True, help="Model to use (e.g., 'gpt-4o', 'gpt-4o-mini', 'Qwen/Qwen3-8B-Base')")
+    parser.add_argument("--eval_model", type=str, required=False, help="Model to use (e.g., 'gpt-4o', 'gpt-4o-mini', 'Qwen/Qwen3-8B-Base')")
     parser.add_argument("--seed", type=int, default=95, help="Random seed for reproducibility")
     parser.add_argument("--hire", action="store_true", help="Enable HIRE (Hierarchical Reference-Free Code Evaluation)")
     
@@ -46,13 +46,16 @@ def main():
         
         # 2. Setup Components
         generator = CodeGenerator(args.code_gen_model)
-        evaluator = Evaluator(args.eval_model, args.hire)
+        evaluator = None if args.evaluation_method is None else Evaluator(args.eval_model, args.evaluation_method, args.hire)
         
         # 3. Initialize Pipeline
         runner = PipelineRunner(generator, evaluator)
         
         # 4. Run
         results = runner.run_experiment(dataset)
+
+        if evaluator is None:
+            return
         
         # 5. Logging
         import subprocess
