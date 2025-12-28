@@ -15,7 +15,7 @@ class CodeData(Dataset):
         elif task_name.lower() == "humaneval": #f"{self.root}/leetcode-hard.jsonl"
             self.data_path = 'HumanEval.jsonl'
         elif "evoeval" in task_name.lower(): #f"{self.root}/leetcode-hard.jsonl"
-            self.data_path = f'EvoEval_{task_name.split("_")[1]}.jsonl'#'leetcode-hard.json'
+            self.data_path = f'EvoEval_{task_name[task_name.find("_")+1:]}.jsonl'#'leetcode-hard.json'
         elif "core_eval" in task_name.lower(): #f"{self.root}/leetcode-hard.jsonl"
             self.data_path = f'core_eval.jsonl'#'leetcode-hard.json'
         else:
@@ -46,7 +46,12 @@ class CodeData(Dataset):
 
     def __getitem__(self, index):
         row = self.dataset[index]
-        return row["task_id"], row["prompt"], row["test"], row['canonical_solution']
+     
+        if "evoeval" in self.data_path.lower():
+            tests = row["inputs"]
+        else:
+            tests = row["test"]
+        return row["task_id"], row["prompt"], tests, row['canonical_solution']
 
     def __len__(self):
         return len(self.dataset)
