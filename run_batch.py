@@ -48,7 +48,7 @@ def main():
         print(f"Batch job created. ID: {job_id}")
         
         # Save response
-        output_dir = "batch_response"
+        output_dir = "batch_job_metadata"
         os.makedirs(output_dir, exist_ok=True)
         
         input_basename = os.path.basename(args.batch_input_file)
