@@ -1,8 +1,11 @@
 import os
 import hashlib
 import json
-# Lazy import for Together and OpenAI
+from together import Together
+from openai import OpenAI
+from dotenv import load_dotenv
 
+load_dotenv()
 
 TOGETHER_AI_MODELS = [
     "Qwen/Qwen3-8B-Base",
