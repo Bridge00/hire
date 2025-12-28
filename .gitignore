@@ -4,3 +4,5 @@
 /notebooks
 /batch_response
 /batch_jobs
+/batch_job_metadata
+/batch_results

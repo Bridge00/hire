@@ -62,3 +62,10 @@ def get_llm_response(sys_prompt: str, user_prompt: str, model : str ) -> str:
         json.dump({"content": content}, f)
         
     return content
+
+def clean_code(code):
+
+    if isinstance(code, list):
+        return code[0].split("```python")[1].split("```")[0]
+    else:
+        return code.split("```python")[1].split("```")[0] 

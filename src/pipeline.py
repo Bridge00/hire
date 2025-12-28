@@ -1,7 +1,7 @@
 from typing import List, Dict, Any
 from src.generator import CodeGenerator
 from src.evaluator import Evaluator
-
+import utils.llm as ul
 class PipelineRunner:
     """
     Runs an experimental pipeline:
@@ -49,7 +49,8 @@ class PipelineRunner:
             
             if self.evaluator is None:
                 continue
-                
+
+            code = ul.clean_code(code)  
             # 2. Evaluate (LLM)
             llm_evaluation = self.evaluator.evaluate(prompt, code)
             
