@@ -1,12 +1,11 @@
-from abc import ABC, abstractmethod
 
-class CodeGenerator(ABC):
-    """
-    Abstract base class for the Code Generator (G).
-    Responsible for generating candidate code based on a prompt.
-    """
-    
-    @abstractmethod
+from utils.llm import get_llm_response
+from utils.prompts import CODEGEN_SYS
+
+class CodeGenerator:
+    def __init__(self, model: str = "gpt-4o-mini"):
+        self.model = model
+
     def generate(self, prompt: str) -> str:
         """
         Generates code based on the given prompt.
@@ -17,4 +16,7 @@ class CodeGenerator(ABC):
         Returns:
             The generated code as a string.
         """
-        pass
+        
+        return get_llm_response(sys_prompt=CODEGEN_SYS, 
+                                user_prompt=prompt, 
+                                model=self.model)
