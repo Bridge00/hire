@@ -52,7 +52,7 @@ class PipelineRunner:
             code = ul.clean_code(code)  
              
             # 3. Execution Metrics (with Cache)
-            execution_metrics = {}
+            #execution_metrics = {}
             if tests:
                 state, feedback = self.py_evaluator.evaluate(code, tests)
                 # execution_metrics = {
