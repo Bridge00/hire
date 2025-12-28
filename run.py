@@ -6,11 +6,7 @@ from src.generator import CodeGenerator
 from src.evaluator import Evaluator
 from data.all_code_benchmarks import CodeData
 
-def get_dataset(dataset_name: str) -> List[Dict[str, str]]:
-    pass
 
-def get_generator(model_name: str) -> CodeGenerator:
-    return CodeGenerator(model_name)
 
 def get_evaluator(evaluation_method: str, model_name: str, hire: bool) -> Evaluator:
     if evaluation_method == "vanilla":
