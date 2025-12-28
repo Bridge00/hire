@@ -2,3 +2,5 @@
 .env
 /.cache
 /notebooks
+/batch_response
+/batch_jobs
