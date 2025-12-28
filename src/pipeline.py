@@ -55,11 +55,11 @@ class PipelineRunner:
             execution_metrics = {}
             if tests:
                 state, feedback = self.py_evaluator.evaluate(code, tests)
-                execution_metrics = {
-                        "state": state,
-                        "feedback": feedback,
-                        "pass_rate": sum(state) / len(state) if state else 0.0
-                }
+                # execution_metrics = {
+                #         "state": state,
+                #         "feedback": feedback,
+                #         "pass_rate": sum(state) / len(state) if state else 0.0
+                # }
             # exec_result = {
             #     "task_id": task_id,
             #     "prompt": prompt,
@@ -77,7 +77,10 @@ class PipelineRunner:
                 "prompt": prompt,
                 "generated_code": code,
                 "canonical_solution": canonical_solution,
-                "llm_evaluation": llm_evaluation
+                "llm_evaluation": llm_evaluation,
+                "state" : state,
+                "feedback" : feedback,
+                "pass_rate" : sum(state) / len(state) if state else 0.0
             }
             llm_eval_results.append(llm_eval_result)
             # 4. Store
