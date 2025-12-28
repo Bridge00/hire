@@ -27,7 +27,7 @@ def main():
     parser.add_argument("--evaluation_method", type=str, required=True, help="Base evaluation method (e.g., 'vanilla', 'codejudge')")
     parser.add_argument("--code_gen_model", type=str, required=True, help="Model to use (e.g., 'gpt-4o', 'gpt-4o-mini', 'Qwen/Qwen3-8B-Base')")
     parser.add_argument("--eval_model", type=str, required=True, help="Model to use (e.g., 'gpt-4o', 'gpt-4o-mini', 'Qwen/Qwen3-8B-Base')")
-
+    parser.add_argument("--seed", type=int, default=95, help="Random seed for reproducibility")
     parser.add_argument("--hire", action="store_true", help="Enable HIRE (Hierarchical Reference-Free Code Evaluation)")
     
     args = parser.parse_args()
@@ -54,8 +54,36 @@ def main():
         # 4. Run
         results = runner.run_experiment(dataset)
         
-        # 5. Output
+        # 5. Logging
+        import subprocess
+        import datetime
+        import json
+        
+        def get_git_commit():
+            try:
+                return subprocess.check_output(["git", "rev-parse", "HEAD"]).decode("utf-8").strip()
+            except Exception:
+                return "unknown"
+
+        log_data = {
+            "config": vars(args),
+            "git_commit": get_git_commit(),
+            "timestamp": datetime.datetime.now().isoformat(),
+            "results": results
+        }
+        
+        # Create logs directory
+        log_dir = "logs"
+        os.makedirs(log_dir, exist_ok=True)
+        
+        # Generate filename
+        filename = f"{log_dir}/seed_{args.seed}_{args.dataset}_{args.evaluation_method}.json"
+        
+        with open(filename, "w") as f:
+            json.dump(log_data, f, indent=2)
+            
         print(f"\nCompleted {len(results)} items.")
+        print(f"Results saved to: {filename}")
         if results:
             print(f"Sample Result: {results[0]}")
         
