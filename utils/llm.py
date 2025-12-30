@@ -1,6 +1,7 @@
 import os
 import hashlib
 import json
+import re
 
 from dotenv import load_dotenv
 
@@ -19,20 +20,88 @@ OPENAI_MODELS = [
 os.makedirs(os.getenv("CACHE_DIR"), exist_ok=True)
 
 def _get_cache_key(sys_prompt: str, user_prompt: str, model: str) -> str:
+    """Legacy hash-based cache key for backward compatibility."""
     unique_str = f"{model}:{sys_prompt}:{user_prompt}"
     return hashlib.md5(unique_str.encode('utf-8')).hexdigest()
 
-def get_llm_response(sys_prompt: str, user_prompt: str, model : str ) -> str:
+def _sanitize_filename(name: str) -> str:
+    """Sanitize a string to be used as a filename."""
+    # Replace invalid characters with underscores
+    return re.sub(r'[<>:"/\\|?*]', '_', name)
+
+def _get_structured_cache_path(model: str, dataset: str = None, task_id: str = None, 
+                                 eval_model: str = None, eval_prompt_type: str = None) -> str:
+    """
+    Get a human-readable cache path based on context.
     
-    # Check cache
+    For code generation: dataset/code_gen_model/task_id.json
+    For evaluation: dataset/code_gen_model/eval_model/eval_prompt_type/task_id.json
+    """
+    cache_dir = os.getenv("CACHE_DIR", ".cache")
+    
+    if not dataset or not task_id:
+        # Fallback to hash-based if context is missing
+        return None
+    
+    # Sanitize components
+    dataset = _sanitize_filename(dataset)
+    task_id = _sanitize_filename(task_id)
+    model = _sanitize_filename(model)
+    
+    if eval_model and eval_prompt_type:
+        # Evaluation cache: dataset/code_gen_model/eval_model/eval_prompt_type/task_id.json
+        eval_model = _sanitize_filename(eval_model)
+        eval_prompt_type = _sanitize_filename(eval_prompt_type)
+        cache_path = os.path.join(cache_dir, dataset, model, eval_model, eval_prompt_type, f"{task_id}.json")
+    else:
+        # Code generation cache: dataset/code_gen_model/task_id.json
+        cache_path = os.path.join(cache_dir, dataset, model, f"{task_id}.json")
+    
+    return cache_path
+
+def get_llm_response(sys_prompt: str, user_prompt: str, model: str, 
+                     dataset: str = None, task_id: str = None,
+                     eval_model: str = None, eval_prompt_type: str = None) -> str:
+    """
+    Get LLM response with caching.
+    
+    Args:
+        sys_prompt: System prompt
+        user_prompt: User prompt
+        model: Model name (for code generation) or eval model name
+        dataset: Dataset name (optional, for structured cache)
+        task_id: Task ID (optional, for structured cache)
+        eval_model: Evaluation model (optional, for evaluation cache)
+        eval_prompt_type: Type of evaluation prompt (e.g., 'vanilla', 'cj_analysis', 'cj_summary')
+    
+    Returns:
+        LLM response content
+    """
+    
+    # Try structured cache first
+    structured_cache_path = _get_structured_cache_path(
+        model=eval_model if eval_model else model,
+        dataset=dataset,
+        task_id=task_id,
+        eval_model=eval_model,
+        eval_prompt_type=eval_prompt_type
+    )
+    
+    if structured_cache_path and os.path.exists(structured_cache_path):
+        print(f'Reading from structured cache: {structured_cache_path}')
+        with open(structured_cache_path, "r", encoding="utf-8") as f:
+            return json.load(f)["content"]
+    
+    # Fallback to hash-based cache for backward compatibility
     cache_key = _get_cache_key(sys_prompt, user_prompt, model)
-    cache_path = os.path.join(os.getenv("CACHE_DIR"), f"{cache_key}.json")
-    print(cache_path)
-    if os.path.exists(cache_path):
-        print('reading in cache data')
-        with open(cache_path, "r", encoding="utf-8") as f:
+    hash_cache_path = os.path.join(os.getenv("CACHE_DIR"), f"{cache_key}.json")
+    
+    if os.path.exists(hash_cache_path):
+        print(f'Reading from hash cache: {hash_cache_path}')
+        with open(hash_cache_path, "r", encoding="utf-8") as f:
             return json.load(f)["content"]
 
+    # Make API call
     if model in TOGETHER_AI_MODELS:
         from together import Together
         client = Together() 
@@ -57,15 +126,23 @@ def get_llm_response(sys_prompt: str, user_prompt: str, model : str ) -> str:
     )
     content = response.choices[0].message.content
     
-    # Save to cache
-    with open(cache_path, "w", encoding="utf-8") as f:
-        json.dump({"content": content}, f)
+    # Save to structured cache if context is available
+    if structured_cache_path:
+        os.makedirs(os.path.dirname(structured_cache_path), exist_ok=True)
+        with open(structured_cache_path, "w", encoding="utf-8") as f:
+            json.dump({"content": content}, f)
+        print(f'Saved to structured cache: {structured_cache_path}')
+    else:
+        # Fallback to hash-based cache
+        with open(hash_cache_path, "w", encoding="utf-8") as f:
+            json.dump({"content": content}, f)
+        print(f'Saved to hash cache: {hash_cache_path}')
         
     return content
 
 def clean_code(code):
-
     if isinstance(code, list):
         return code[0].split("```python")[1].split("```")[0]
     else:
-        return code.split("```python")[1].split("```")[0] 
+        return code.split("```python")[1].split("```")[0]
+ 

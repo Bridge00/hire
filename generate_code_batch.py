@@ -6,8 +6,6 @@ from dotenv import load_dotenv
 
 from data.all_code_benchmarks import CodeData
 from utils.prompts import CODEGEN_SYS
-# Accessing internal function as discussed in plan
-from utils.llm import _get_cache_key
 
 load_dotenv()
 
@@ -51,17 +49,17 @@ def main():
                 # CodeData __getitem__ returns: task_id, prompt, test, canonical_solution
                 task_id, prompt, _, _ = dataset[i]
                 
-                cache_key = _get_cache_key(CODEGEN_SYS, prompt, args.code_gen_model)
-                cache_path = os.path.join(cache_dir, f"{cache_key}.json")
+                # Check structured cache: dataset/code_gen_model/task_id.json
+                cache_path = os.path.join(cache_dir, args.dataset, args.code_gen_model, f"{task_id}.json")
                 
                 if os.path.exists(cache_path):
                     skipped_count += 1
                     continue
                 
                 # Create Batch Request
-                # https://platform.openai.com/docs/guides/batch
+                # Use task_id as custom_id for structured cache
                 request_body = {
-                    "custom_id": cache_key,
+                    "custom_id": task_id,
                     "method": "POST",
                     "url": "/v1/chat/completions",
                     "body": {
@@ -70,7 +68,6 @@ def main():
                             {"role": "system", "content": CODEGEN_SYS},
                             {"role": "user", "content": prompt}
                         ],
-                        # Add max_tokens if needed, but usually optional or model default
                     }
                 }
                 

@@ -4,6 +4,7 @@ import os
 import sys
 from dotenv import load_dotenv
 from openai import OpenAI
+from process_batch_results import process_and_cache_results
 
 load_dotenv()
 
@@ -73,6 +74,21 @@ def main():
                 f.write(content)
                 
             print(f"Results saved to: {output_path}")
+            
+            # Automatically process and cache the results
+            print("Automatically processing and caching results...")
+            cache_dir = os.environ.get("CACHE_DIR", ".cache")
+            
+            # Parse metadata from filename
+            from process_batch_results import parse_filename_metadata
+            dataset, code_gen_model, eval_model, eval_prompt_type = parse_filename_metadata(output_path)
+            
+            if dataset and code_gen_model:
+                # Unified function handles both code gen and eval results
+                process_and_cache_results(output_path, dataset, code_gen_model, eval_model, eval_prompt_type, cache_dir)
+            else:
+                print("Warning: Could not auto-detect metadata from filename. Skipping automatic cache processing.")
+                print("Please run process_batch_results.py manually with appropriate arguments.")
             
         elif batch.status == "failed":
             print(f"Batch failed. Error: {batch.errors}")

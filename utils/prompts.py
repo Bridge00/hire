@@ -64,4 +64,17 @@ Evaluation Form:
 JSON output (a JSON list only):
 """
 
+# Prompt for HIRE Decomposer (D)
+HIRE_DECOMPOSER = """
+Analyze the following Python code and decompose it into exactly {N} high-level steps.
+Return the result as a valid JSON object with a single key "steps", which is a list of objects.
+Each object in the "steps" list must have:
+- "code_segment": The exact code snippet for that step.
+- "explanation": A concise explanation of what that code does.
+
+Code:
+{CODE}
+"""
+
+
 

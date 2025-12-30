@@ -7,15 +7,16 @@ class PipelineRunner:
     Runs an experimental pipeline:
     For each item in dataset:
         1. Generate code (using G)
-        2. Evaluate code (using E)
+        2. LLM Evaluate code (using E)
         3. Collect results
     """
     
-    def __init__(self, generator: CodeGenerator, evaluator: Evaluator):
+    def __init__(self, generator: CodeGenerator, evaluator: Evaluator, no_eval : bool):
         self.generator = generator
         self.evaluator = evaluator
+        self.no_eval = no_eval
 
-    def run_experiment(self, dataset) -> List[Dict[str, Any]]:
+    def run_experiment(self, dataset, py_evaluator) -> List[Dict[str, Any]]:
         """
         Runs the experiment on the dataset.
         
@@ -26,11 +27,12 @@ class PipelineRunner:
             List of result dictionaries.
         """
         exec_results = []
-        llm_eval_results = []
+        #llm_eval_results = []
         
         # Iterate over the dataset
         # CodeData __getitem__ returns: task_id, prompt, tests, canonical_solution
         for i, item in enumerate(dataset):
+            #print(item.keys())
             
             # Unpack item based on expected format
             if isinstance(item, tuple) and len(item) >= 3:
@@ -46,7 +48,7 @@ class PipelineRunner:
             print(f"Processing task {i} out of {len(dataset)} : Task ID: {task_id}...")
             
             # 1. Generate
-            code = self.generator.generate(prompt)
+            code = self.generator.generate(prompt, task_id=task_id)
             
 
             code = ul.clean_code(code)  
@@ -54,37 +56,20 @@ class PipelineRunner:
             # 3. Execution Metrics (with Cache)
             #execution_metrics = {}
             if tests:
-                state, feedback = self.py_evaluator.evaluate(code, tests)
-                # execution_metrics = {
-                #         "state": state,
-                #         "feedback": feedback,
-                #         "pass_rate": sum(state) / len(state) if state else 0.0
-                # }
-            # exec_result = {
-            #     "task_id": task_id,
-            #     "prompt": prompt,
-            #     "generated_code": code,
-            #     "canonical_solution": canonical_solution,
-            #     "execution_metrics": execution_metrics
-            # }
-            # exec_results.append(exec_result)
-            # 2. Evaluate (LLM)
-            if self.evaluator is None:
-                continue
-            llm_evaluation = self.evaluator.evaluate(prompt, code)
-            llm_eval_result = {
-                "task_id": task_id,
-                "prompt": prompt,
-                "generated_code": code,
-                "canonical_solution": canonical_solution,
-                "llm_evaluation": llm_evaluation,
-                "state" : state,
-                "feedback" : feedback,
-                "pass_rate" : sum(state) / len(state) if state else 0.0
-            }
-            llm_eval_results.append(llm_eval_result)
-            # 4. Store
+                state, feedback = py_evaluator.evaluate(code, tests)
 
-            
-            
-        return llm_eval_results
+                exec_results.append({
+                    "task_id": task_id,
+                    "prompt": prompt,
+                    "generated_code": code,
+                    "canonical_solution": canonical_solution,
+                    "state": state,
+                    "feedback": feedback,
+                    "pass_rate": sum(state) / len(state) if state else 0.0
+                })
+
+            if self.evaluator is not None and not self.no_eval:
+                self.evaluator.evaluate(prompt, code)
+
+        return exec_results
+

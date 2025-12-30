@@ -45,13 +45,20 @@ class CodeData(Dataset):
         #     f.write(r.content)
 
     def __getitem__(self, index):
+        #print('index', index)
+        #print('len of dataset', len(self.dataset))
+        #print('type of dataset', type(self.dataset))
+        #print('type of dataset[index]', type(self.dataset[index]))
         row = self.dataset[index]
      
         # if "evoeval" in self.data_path.lower():
         #     tests = row["inputs"]
         # else:
-        tests = row["test"]
-        return row["task_id"], row["prompt"], tests, row['canonical_solution']
+        #return row
+        #print(type(row))
+        #print('type of row[0]', type(row[0]))
+        #print('len of row', len(row))
+        return row["task_id"], row["prompt"], row['test'], row['canonical_solution']
 
     def __len__(self):
         return len(self.dataset)

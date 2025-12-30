@@ -2,6 +2,12 @@ from scipy.stats import kendalltau, spearmanr
 from typing import List, Dict, Any
 import re
 import numpy as np
+import pandas as pd
+import json
+import os
+from data.all_code_benchmarks import CodeData
+from utils.llm import _get_cache_key
+from utils.prompts import CODEJUDGE_ANALYSIS, CODEJUDGE_SUMMARY, VANILLA_EVAL_BINARY
 
 def rank_metrics(scores_a, scores_b) -> Dict[str, float]:
     kt = kendalltau(scores_a, scores_b, nan_policy="omit")
@@ -85,4 +91,108 @@ def calculate_metrics(results: Dict[str, Any]) -> Dict[str, float]:
         
     return rank_metrics(llm_scores, exec_scores)
 
+
+def create_results_dataframe(dataset: str, code_gen_model: str, eval_model: str = None, 
+                              evaluation_method: str = None, 
+                              seed: int = 95) -> pd.DataFrame:
+    """
+    Creates a pandas DataFrame combining execution results and LLM evaluations.
+    
+    Args:
+        dataset: Name of the dataset (e.g., 'leetcode', 'humaneval')
+        code_gen_model: Model used to generate code (e.g., 'gpt-4o-mini')
+        eval_model: Model used for LLM evaluation (optional)
+        evaluation_method: Evaluation method ('vanilla', 'codejudge', or None for execution-only)
+        seed: Random seed used in the experiment
+        
+    Returns:
+        DataFrame with columns: task_id, prompt, generated_code, state, feedback, pass_rate,
+        and LLM evaluation columns (vanilla_eval or cj_analysis + cj_summary for CodeJudge)
+    """
+    # Load execution results
+    exec_log_path = os.path.join(os.getenv("ROOT_DIR"), "execution_logs", f"seed_{seed}_{dataset}_{code_gen_model}_exec.json")
+    
+    if not os.path.exists(exec_log_path):
+        raise FileNotFoundError(f"Execution log not found: {exec_log_path}")
+    
+    with open(exec_log_path, 'r', encoding='utf-8') as f:
+        exec_data = json.load(f)
+    
+    
+    # Build rows
+    rows = []
+    cache_dir = os.getenv("CACHE_DIR", ".cache")
+    
+    for result in exec_data['results']:
+        task_id = result['task_id']
+        prompt = result['prompt']
+        generated_code = result['generated_code']
+        state = tuple(result.get('state', []))
+        feedback = result.get('feedback', '')
+        pass_rate = result.get('pass_rate', 0.0)
+        
+        row = {
+            'task_id': task_id,
+            'prompt': prompt,
+            'generated_code': generated_code,
+            'state': state,
+            'feedback': feedback,
+            'pass_rate': pass_rate
+        }
+        
+        # Retrieve LLM evaluation from cache if evaluation_method is specified
+        if evaluation_method and eval_model:
+            if evaluation_method == 'vanilla':
+                # Get vanilla evaluation from structured cache
+                # Path: dataset/code_gen_model/eval_model/vanilla/task_id.json
+                cache_path = os.path.join(cache_dir, dataset, code_gen_model, eval_model, evaluation_method, f"{task_id}.json")
+                
+                if os.path.exists(cache_path):
+                    with open(cache_path, 'r', encoding='utf-8') as f:
+                        cached = json.load(f)
+                        row['vanilla_eval'] = cached.get('content', '')
+                else:
+                    row['vanilla_eval'] = None
+                    
+            elif evaluation_method == 'codejudge':
+                # Get CodeJudge analysis
+                # Path: dataset/code_gen_model/eval_model/cj_analysis/task_id.json
+                cache_path = os.path.join(cache_dir, dataset, code_gen_model, eval_model, 'cj_analysis', f"{task_id}.json")
+                
+                if os.path.exists(cache_path):
+                    with open(cache_path, 'r', encoding='utf-8') as f:
+                        cached = json.load(f)
+                        cj_analysis = cached.get('content', '')
+                        row['cj_analysis'] = cj_analysis
+                else:
+                    cj_analysis = None
+                    row['cj_analysis'] = None
+                
+                # Get CodeJudge summary
+                # Path: dataset/code_gen_model/eval_model/cj_summary/task_id.json
+                cache_path = os.path.join(cache_dir, dataset, code_gen_model, eval_model, 'cj_summ', f"{task_id}.json")
+                
+                if os.path.exists(cache_path):
+                    with open(cache_path, 'r', encoding='utf-8') as f:
+                        cached = json.load(f)
+                        row['cj_summary'] = cached.get('content', '')
+                else:
+                    row['cj_summary'] = None
+            elif evaluation_method == 'hire_decomposer':
+                # Get Hire Decomposer analysis
+                # Path: dataset/code_gen_model/eval_model/hire_decomposer/task_id.json
+                cache_path = os.path.join(cache_dir, dataset, code_gen_model, eval_model, 'hire_decomposer', f"{task_id}.json")
+                
+                if os.path.exists(cache_path):
+                    with open(cache_path, 'r', encoding='utf-8') as f:
+                        cached = json.load(f)
+                        row['hire_decomposer'] = cached.get('content', '')
+                else:
+                    row['hire_decomposer'] = None
+            else:
+                pass
+        
+        rows.append(row)
+    
+    return pd.DataFrame(rows)
 
