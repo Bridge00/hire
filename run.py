@@ -29,6 +29,7 @@ def main():
     parser.add_argument("--start_problem", type=int, default=0, help="Start problem index")
     parser.add_argument("--end_problem", type=int, default=None, help="End problem index")
     parser.add_argument("--no_eval", action="store_true", help="Skip LLM evaluation and only run execution tests")
+    parser.add_argument("--execute_solution", action="store_true", help="Execute canonical solution instead of generated code")
     
     args = parser.parse_args()
     
@@ -56,7 +57,7 @@ def main():
         evaluator = None if args.evaluation_method is None else Evaluator(args.eval_model, dataset=args.dataset, code_gen_model=args.code_gen_model)
         
         # 3. Initialize Pipeline
-        runner = PipelineRunner(generator, evaluator, no_eval=args.no_eval)
+        runner = PipelineRunner(generator, evaluator, no_eval=args.no_eval, execute_solution=args.execute_solution, dataset_name=args.dataset)
         
         # 4. Run
         results = runner.run_experiment(code_dataset_subset, py_evaluator)
@@ -83,8 +84,10 @@ def main():
 
         log_dir = "execution_logs"
         # Naming convention for execution logs
-        filename = f"{log_dir}/seed_{args.seed}_{args.dataset}_{args.code_gen_model}_exec.json"
-
+        if args.execute_solution:
+            filename = f"{log_dir}/{args.dataset}_solutions_exec.json"
+        else:
+            filename = f"{log_dir}/seed_{args.seed}_{args.dataset}_{args.code_gen_model}_exec.json"
             
         os.makedirs(log_dir, exist_ok=True)
         

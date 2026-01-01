@@ -5,6 +5,10 @@ import json
 from dotenv import load_dotenv
 load_dotenv()
 
+def extract_asserts(text: str):
+    lines = text.splitlines()
+    return [line.strip() for line in lines if line.strip().startswith("assert")]
+
 class CodeData(Dataset):
     def __init__(self, task_name: str = None):
         # if root is None:
@@ -50,7 +54,15 @@ class CodeData(Dataset):
         #print('type of dataset', type(self.dataset))
         #print('type of dataset[index]', type(self.dataset[index]))
         row = self.dataset[index]
-     
+
+        tests = row['test']
+        if "humaneval" in self.data_path.lower():
+
+            tests = extract_asserts(row['test'])
+        elif "leetcode" in self.data_path.lower():
+            tests = extract_asserts(row['test'])
+        else:
+            tests = row['test']
         # if "evoeval" in self.data_path.lower():
         #     tests = row["inputs"]
         # else:
@@ -58,7 +70,7 @@ class CodeData(Dataset):
         #print(type(row))
         #print('type of row[0]', type(row[0]))
         #print('len of row', len(row))
-        return row["task_id"], row["prompt"], row['test'], row['canonical_solution']
+        return row["task_id"], row["prompt"], tests, row['canonical_solution']
 
     def __len__(self):
         return len(self.dataset)

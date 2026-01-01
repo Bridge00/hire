@@ -11,10 +11,12 @@ class PipelineRunner:
         3. Collect results
     """
     
-    def __init__(self, generator: CodeGenerator, evaluator: Evaluator, no_eval : bool):
+    def __init__(self, generator: CodeGenerator, evaluator: Evaluator, no_eval : bool, execute_solution: bool, dataset_name: str):
         self.generator = generator
         self.evaluator = evaluator
         self.no_eval = no_eval
+        self.execute_solution = execute_solution
+        self.dataset_name = dataset_name
 
     def run_experiment(self, dataset, py_evaluator) -> List[Dict[str, Any]]:
         """
@@ -47,16 +49,19 @@ class PipelineRunner:
                 
             print(f"Processing task {i} out of {len(dataset)} : Task ID: {task_id}...")
             
-            # 1. Generate
-            code = self.generator.generate(prompt, task_id=task_id)
+            if not self.execute_solution:
+                # 1. Generate
+                code = self.generator.generate(prompt, task_id=task_id)
+                code = ul.clean_code(code)  
+            else:
+                code = canonical_solution
             
-
-            code = ul.clean_code(code)  
+            
              
             # 3. Execution Metrics (with Cache)
             #execution_metrics = {}
             if tests:
-                state, feedback = py_evaluator.evaluate(code, tests)
+                state, feedback = py_evaluator.evaluate(code, tests, self.dataset_name)
 
                 exec_results.append({
                     "task_id": task_id,
