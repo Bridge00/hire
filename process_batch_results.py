@@ -99,8 +99,8 @@ def process_and_cache_results(results_file: str, dataset: str, code_gen_model: s
                 task_id = custom_id
                 
                 # Save to structured cache
-                if 'humaneval' in structured_cache_dir.lower():
-                    task_id = '_'.join(task_id.split('/'))
+                # if 'humaneval' in structured_cache_dir.lower():
+                #     task_id = '_'.join(task_id.split('/'))
                 cache_path = os.path.join(structured_cache_dir, f"{task_id}.json")
                 with open(cache_path, 'w', encoding='utf-8') as cache_f:
                     json.dump({"content": content}, cache_f)

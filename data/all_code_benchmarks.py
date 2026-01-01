@@ -59,6 +59,8 @@ class CodeData(Dataset):
         if "humaneval" in self.data_path.lower():
 
             tests = extract_asserts(row['test'])
+
+            row["task_id"] = '_'.join(row["task_id"].split('/'))
         elif "leetcode" in self.data_path.lower():
             tests = extract_asserts(row['test'])
         else:
