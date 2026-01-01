@@ -2,6 +2,7 @@ import errno
 import os
 import signal
 import functools
+import threading
 import ast
 import astunparse
 
@@ -23,13 +24,23 @@ def timeout(seconds=10, error_message=os.strerror(errno.ETIME)):
 
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            signal.signal(signal.SIGALRM, _handle_timeout)
-            signal.alarm(seconds)
+            # --- UNIX: use SIGALRM ---
+            if hasattr(signal, "SIGALRM"):
+                signal.signal(signal.SIGALRM, _handle_timeout)
+                signal.alarm(seconds)
+                try:
+                    return func(*args, **kwargs)
+                finally:
+                    signal.alarm(0)
+
+            # --- WINDOWS: use threading.Timer ---
+            timer = threading.Timer(seconds, _handle_timeout)
+            timer.start()
             try:
-                result = func(*args, **kwargs)
+                return func(*args, **kwargs)
             finally:
-                signal.alarm(0)
-            return result
+                timer.cancel()
+
 
         return wrapper
 
