@@ -6,7 +6,8 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from data.all_code_benchmarks import CodeData
-from utils.prompts import CODEGEN_SYS, VANILLA_EVAL_BINARY, CODEJUDGE_ANALYSIS, CODEJUDGE_SUMMARY, HIRE_DECOMPOSER
+#from utils.prompts import CODEGEN_SYS, VANILLA_EVAL_BINARY, CODEJUDGE_ANALYSIS, CODEJUDGE_SUMMARY, HIRE_DECOMPOSER
+import utils.prompts as up
 from utils.llm import clean_code
 
 load_dotenv()
@@ -47,7 +48,7 @@ def generate_code_batch(args, dataset, cache_dir):
                     "body": {
                         "model": args.code_gen_model,
                         "messages": [
-                            {"role": "system", "content": CODEGEN_SYS},
+                            {"role": "system", "content": up.CODEGEN_SYS},
                             {"role": "user", "content": prompt}
                         ],
                     }
@@ -107,12 +108,28 @@ def generate_eval_batch(args, dataset, cache_dir):
                 eval_prompt_type = args.eval_prompt
                 
                 if args.eval_prompt == "vanilla":
-                    eval_user_prompt = VANILLA_EVAL_BINARY.format(PROBLEM=problem_prompt, CODE=cleaned_code)
+                    eval_user_prompt =up.VANILLA_EVAL_BINARY.format(PROBLEM=problem_prompt, CODE=cleaned_code)
                 elif args.eval_prompt == "hire_decomposer":
-                    eval_user_prompt = HIRE_DECOMPOSER.format(N=args.n, CODE=cleaned_code)
+                    eval_user_prompt = up.HIRE_DECOMPOSER.format(N=args.n, CODE=cleaned_code)
                     eval_prompt_type = "hire_decomposer"
+                elif args.eval_prompt == "hire_plan_checker":
+
+    
+                    decomposed_plan_path = os.path.join(cache_dir, args.dataset, args.code_gen_model, args.eval_model, "hire_decomposer", f"{task_id}.json")
+                    
+                    if not os.path.exists(decomposed_plan_path):
+                        missing_code_count += 1
+                        continue
+                    
+                    with open(decomposed_plan_path, 'r', encoding='utf-8') as f:
+                        plan_data = json.load(f)
+                        plan = plan_data.get("content", "")
+                    
+                    eval_user_prompt = up.HIRE_PLAN_CHECKER.format(PROBLEM=problem_prompt, plan=plan)
+                    eval_prompt_type = "hire_plan_checker"
+
                 elif args.eval_prompt == "cj_analysis":
-                    eval_user_prompt = CODEJUDGE_ANALYSIS.format(PROBLEM=problem_prompt, CODE=cleaned_code)
+                    eval_user_prompt = up.CODEJUDGE_ANALYSIS.format(PROBLEM=problem_prompt, CODE=cleaned_code)
                 elif args.eval_prompt == "cj_summ":
                     # Check structured cache for analysis
                     analysis_model = args.analysis_model or args.eval_model
@@ -126,7 +143,7 @@ def generate_eval_batch(args, dataset, cache_dir):
                         analysis_data = json.load(f)
                         analysis_content = analysis_data.get("content", "")
                         
-                    eval_user_prompt = CODEJUDGE_SUMMARY.format(ANALYSIS=analysis_content)
+                    eval_user_prompt = up.CODEJUDGE_SUMMARY.format(ANALYSIS=analysis_content)
                     eval_prompt_type = "cj_summary"
 
                 if not eval_user_prompt:
