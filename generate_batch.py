@@ -67,17 +67,28 @@ def generate_code_batch(args, dataset, cache_dir):
     
     return output_file
 
-def generate_eval_batch(args, dataset, cache_dir):
+def generate_eval_batch(args, dataset, cache_dir, k_index=None, temperature=None):
     """Generate batch requests for evaluation."""
     start = args.start_problem
     end = min(args.end_problem, len(dataset))
     
     print(f"Generating EVALUATION batch for items {start} to {end} with prompt '{args.eval_prompt}'")
     
+    
+     
+    if args.eval_solution:
+        code_source = 'solution'
+
+    else:
+        code_source = f'code_model_{args.code_gen_model}'
+    eval_prompt_type = args.eval_prompt
+    if k_index is not None:
+        eval_prompt_type = f"{args.eval_prompt}_k{k_index}"
+
     os.makedirs(args.output_dir, exist_ok=True)
     output_file = os.path.join(
         args.output_dir, 
-        f"{args.dataset}_code_model_{args.code_gen_model}_{args.eval_prompt}_eval_eval_{args.eval_model}_{start}_{end}.jsonl"
+        f"{args.dataset}_{code_source}_{eval_prompt_type}_eval_eval_{args.eval_model}_{start}_{end}.jsonl"
     )
     
     requests_created = 0
@@ -86,35 +97,40 @@ def generate_eval_batch(args, dataset, cache_dir):
     missing_analysis_count = 0
 
     with open(output_file, 'w', encoding='utf-8') as f_out:
+
+
         for i in range(start, end):
             try:
-                task_id, problem_prompt, _, _ = dataset[i]
+                task_id, problem_prompt, _, canonical_solution = dataset[i]
                 
-                # 1. Locate the generated code in structured cache
-                gen_cache_path = os.path.join(cache_dir, args.dataset, args.code_gen_model, f"{task_id}.json")
-                
-                if not os.path.exists(gen_cache_path):
-                    missing_code_count += 1
-                    continue
-                
-                with open(gen_cache_path, 'r', encoding='utf-8') as f:
-                    gen_data = json.load(f)
-                    raw_code = gen_data.get("content", "")
+                raw_code = ""
+
+                if args.eval_solution:
+                    raw_code = canonical_solution
+                else:
+                    # 1. Locate the generated code in structured cache
+                    gen_cache_path = os.path.join(cache_dir, args.dataset, args.code_gen_model, f"{task_id}.json")
+                    
+                    if not os.path.exists(gen_cache_path):
+                        missing_code_count += 1
+                        continue
+                    
+                    with open(gen_cache_path, 'r', encoding='utf-8') as f:
+                        gen_data = json.load(f)
+                        raw_code = gen_data.get("content", "")
 
                 cleaned_code = clean_code(raw_code)
 
                 # 2. Construct Evaluation Prompt
                 eval_user_prompt = ""
-                eval_prompt_type = args.eval_prompt
                 
                 if args.eval_prompt == "vanilla":
-                    eval_user_prompt =up.VANILLA_EVAL_BINARY.format(PROBLEM=problem_prompt, CODE=cleaned_code)
+                    eval_user_prompt = up.VANILLA_EVAL_BINARY.format(PROBLEM=problem_prompt, CODE=cleaned_code)
+                    active_eval_prompt_type = "vanilla"
                 elif args.eval_prompt == "hire_decomposer":
                     eval_user_prompt = up.HIRE_DECOMPOSER.format(N=args.n, CODE=cleaned_code)
-                    eval_prompt_type = "hire_decomposer"
+                    active_eval_prompt_type = "hire_decomposer"
                 elif args.eval_prompt == "hire_plan_checker":
-
-    
                     decomposed_plan_path = os.path.join(cache_dir, args.dataset, args.code_gen_model, args.eval_model, "hire_decomposer", f"{task_id}.json")
                     
                     if not os.path.exists(decomposed_plan_path):
@@ -125,11 +141,12 @@ def generate_eval_batch(args, dataset, cache_dir):
                         plan_data = json.load(f)
                         plan = plan_data.get("content", "")
                     
-                    eval_user_prompt = up.HIRE_PLAN_CHECKER.format(PROBLEM=problem_prompt, plan=plan)
-                    eval_prompt_type = "hire_plan_checker"
+                    eval_user_prompt = up.HIRE_PLAN_CHECKER.format(PROBLEM=problem_prompt, PLAN=plan)
+                    active_eval_prompt_type = "hire_plan_checker"
 
                 elif args.eval_prompt == "cj_analysis":
                     eval_user_prompt = up.CODEJUDGE_ANALYSIS.format(PROBLEM=problem_prompt, CODE=cleaned_code)
+                    active_eval_prompt_type = "cj_analysis"
                 elif args.eval_prompt == "cj_summ":
                     # Check structured cache for analysis
                     analysis_model = args.analysis_model or args.eval_model
@@ -144,20 +161,26 @@ def generate_eval_batch(args, dataset, cache_dir):
                         analysis_content = analysis_data.get("content", "")
                         
                     eval_user_prompt = up.CODEJUDGE_SUMMARY.format(ANALYSIS=analysis_content)
-                    eval_prompt_type = "cj_summary"
+                    active_eval_prompt_type = "cj_summary"
 
                 if not eval_user_prompt:
                     print(f"Error: Empty prompt for item {i}")
                     continue
 
                 # 3. Check if Evaluation is already cached
-                eval_cache_path = os.path.join(cache_dir, args.dataset, args.code_gen_model, args.eval_model, eval_prompt_type, f"{task_id}.json")
+                cache_prompt_type = active_eval_prompt_type
+                if k_index is not None:
+                    cache_prompt_type = f"{active_eval_prompt_type}_k{k_index}"
+
+                if args.eval_solution:
+                     eval_cache_path = os.path.join(cache_dir, args.dataset, "canonical", args.eval_model, cache_prompt_type, f"{task_id}.json")
+                else:
+                     eval_cache_path = os.path.join(cache_dir, args.dataset, args.code_gen_model, args.eval_model, cache_prompt_type, f"{task_id}.json")
 
                 if os.path.exists(eval_cache_path):
                     skipped_count += 1
                     continue
 
-                # 4. Create Batch Request
                 request_body = {
                     "custom_id": task_id,
                     "method": "POST",
@@ -170,6 +193,8 @@ def generate_eval_batch(args, dataset, cache_dir):
                         ],
                     }
                 }
+                if temperature is not None:
+                    request_body["body"]["temperature"] = temperature
                 
                 f_out.write(json.dumps(request_body) + "\n")
                 requests_created += 1
@@ -265,13 +290,17 @@ def main():
     
     # Evaluation-specific arguments
     parser.add_argument("--eval_model", type=str, help="Model for evaluation (required if mode=eval)")
-    parser.add_argument("--eval_prompt", type=str, choices=["vanilla", "cj_analysis", "cj_summ", "hire_decomposer"], 
+    parser.add_argument("--eval_prompt", type=str, choices=["vanilla", "cj_analysis", "cj_summ", "hire_decomposer", "hire_plan_checker"], 
                         help="Evaluation prompt type (required if mode=eval)")
     parser.add_argument("--analysis_model", type=str, help="Model used for analysis (only for cj_summ, defaults to eval_model)")
     parser.add_argument("--n", type=int, default=3, help="Number of steps for hire_decomposer")
+    parser.add_argument("--k", type=int, default=1, help="Number of independent evaluations for vanilla prompt")
+    parser.add_argument("--temperature", type=float, default=0.0, help="Temperature for evaluation (default: 0.0, set to 1.0 if k > 1)")
     
     # Submission control
     parser.add_argument("--dont_submit", action="store_true", help="Don't submit batch to OpenAI (only generate the file)")
+    parser.add_argument("--eval_solution", action="store_true", help="Evaluate the canonical solution ('candidate') instead of generated code")
+
 
     args = parser.parse_args()
     
@@ -301,20 +330,32 @@ def main():
     cache_dir = os.environ.get("CACHE_DIR", ".cache")
     
     # Generate batch based on mode
+    batch_files = []
     if args.mode == "code":
         batch_file = generate_code_batch(args, dataset, cache_dir)
+        batch_files.append(batch_file)
     else:  # eval
-        batch_file = generate_eval_batch(args, dataset, cache_dir)
+        if args.k > 1:
+            # Default temperature to 1.0 if k > 1 and not explicitly set by user to something else non-zero
+            temperature = args.temperature if args.temperature != 0.0 else 1.0
+            for k in range(1, args.k + 1):
+                batch_file = generate_eval_batch(args, dataset, cache_dir, k_index=k, temperature=temperature)
+                batch_files.append(batch_file)
+        else:
+            batch_file = generate_eval_batch(args, dataset, cache_dir, k_index=None, temperature=args.temperature)
+            batch_files.append(batch_file)
     
-    # Submit batch if not disabled
+    # Submit batches if not disabled
     if not args.dont_submit:
         print("\n" + "="*50)
-        print("Submitting batch to OpenAI...")
+        print("Submitting batches to OpenAI...")
         print("="*50)
-        submit_batch(batch_file)
+        for batch_file in batch_files:
+            submit_batch(batch_file)
     else:
-        print("\nBatch file created but not submitted (--dont_submit flag set)")
-        print(f"To submit later, run: python run_batch.py --batch_input_file {batch_file}")
+        print("\nBatch files created but not submitted (--dont_submit flag set)")
+        for batch_file in batch_files:
+            print(f"To submit later, run: python run_batch.py --batch_input_file {batch_file}")
 
 if __name__ == "__main__":
     main()
