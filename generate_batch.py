@@ -147,7 +147,7 @@ def generate_eval_batch(args, dataset, cache_dir, k_index=None, temperature=None
                 elif args.eval_prompt == "cj_analysis":
                     eval_user_prompt = up.CODEJUDGE_ANALYSIS.format(PROBLEM=problem_prompt, CODE=cleaned_code)
                     active_eval_prompt_type = "cj_analysis"
-                elif args.eval_prompt == "cj_summ":
+                elif args.eval_prompt == "cj_summary":
                     # Check structured cache for analysis
                     analysis_model = args.analysis_model or args.eval_model
                     analysis_path = os.path.join(cache_dir, args.dataset, args.code_gen_model, analysis_model, "cj_analysis", f"{task_id}.json")
@@ -207,7 +207,7 @@ def generate_eval_batch(args, dataset, cache_dir, k_index=None, temperature=None
     print(f"Requests created: {requests_created}")
     print(f"Skipped (already cached): {skipped_count}")
     print(f"Skipped (missing generated code): {missing_code_count}")
-    if args.eval_prompt == "cj_summ":
+    if args.eval_prompt == "cj_summary":
         print(f"Skipped (missing analysis): {missing_analysis_count}")
     
     return output_file
@@ -290,9 +290,9 @@ def main():
     
     # Evaluation-specific arguments
     parser.add_argument("--eval_model", type=str, help="Model for evaluation (required if mode=eval)")
-    parser.add_argument("--eval_prompt", type=str, choices=["vanilla", "cj_analysis", "cj_summ", "hire_decomposer", "hire_plan_checker"], 
+    parser.add_argument("--eval_prompt", type=str, choices=["vanilla", "cj_analysis", "cj_summary", "hire_decomposer", "hire_plan_checker"], 
                         help="Evaluation prompt type (required if mode=eval)")
-    parser.add_argument("--analysis_model", type=str, help="Model used for analysis (only for cj_summ, defaults to eval_model)")
+    parser.add_argument("--analysis_model", type=str, help="Model used for analysis (only for cj_summary, defaults to eval_model)")
     parser.add_argument("--n", type=int, default=3, help="Number of steps for hire_decomposer")
     parser.add_argument("--k", type=int, default=1, help="Number of independent evaluations for vanilla prompt")
     parser.add_argument("--temperature", type=float, default=0.0, help="Temperature for evaluation (default: 0.0, set to 1.0 if k > 1)")
@@ -313,7 +313,7 @@ def main():
         if not args.eval_model or not args.eval_prompt:
             print("Error: --eval_model and --eval_prompt are required when mode=eval")
             sys.exit(1)
-        if args.eval_prompt == "cj_summ" and not args.analysis_model:
+        if args.eval_prompt == "cj_summary" and not args.analysis_model:
             args.analysis_model = args.eval_model
 
     # Load dataset
