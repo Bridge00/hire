@@ -142,6 +142,8 @@ def create_results_dataframe(dataset: str, code_gen_model: str, eval_model: str 
         
         # Retrieve LLM evaluation from cache if evaluation_method is specified
         if evaluation_method and eval_model:
+            vanilla_k_match = re.match(r"vanilla_(\d+)", evaluation_method)
+            
             if evaluation_method == 'vanilla':
                 # Get vanilla evaluation from structured cache
                 # Path: dataset/code_gen_model/eval_model/vanilla/task_id.json
@@ -150,45 +152,63 @@ def create_results_dataframe(dataset: str, code_gen_model: str, eval_model: str 
                 if os.path.exists(cache_path):
                     with open(cache_path, 'r', encoding='utf-8') as f:
                         cached = json.load(f)
-                        row['vanilla_eval'] = cached.get('content', '')
+                        row['vanilla'] = cached.get('content', '')
                 else:
-                    row['vanilla_eval'] = None
+                    row['vanilla'] = None
+            elif vanilla_k_match:
+                k = int(vanilla_k_match.group(1))
+                scores = []
+                for j in range(1, k + 1):
+                    # Cache prompt type used in generate_batch.py was f"vanilla_k{j}"
+                    cache_path = os.path.join(cache_dir, dataset, code_gen_model, eval_model, f"vanilla_k{j}", f"{task_id}.json")
+                    if os.path.exists(cache_path):
+                        with open(cache_path, 'r', encoding='utf-8') as f:
+                            cached = json.load(f)
+                            scores.append(parse_score(cached.get('content', '')))
+                
+                if scores:
+                    # Majority vote: 1.0 if more than half are positive
+                    vote_score = 1.0 if sum(scores) > len(scores) / 2 else 0.0
+                    row[evaluation_method] = "Yes" if vote_score == 1.0 else "No"
+                else:
+                    row[evaluation_method] = None
                     
             elif evaluation_method == 'codejudge':
                 # Get CodeJudge analysis
                 # Path: dataset/code_gen_model/eval_model/cj_analysis/task_id.json
-                cache_path = os.path.join(cache_dir, dataset, code_gen_model, eval_model, 'cj_analysis', f"{task_id}.json")
                 
-                if os.path.exists(cache_path):
-                    with open(cache_path, 'r', encoding='utf-8') as f:
-                        cached = json.load(f)
-                        cj_analysis = cached.get('content', '')
-                        row['cj_analysis'] = cj_analysis
-                else:
-                    cj_analysis = None
-                    row['cj_analysis'] = None
+                for step in ['cj_analysis', 'cj_summary']:
+                    cache_path = os.path.join(cache_dir, dataset, code_gen_model, eval_model, step, f"{task_id}.json")
+                    
+                    if os.path.exists(cache_path):
+                        with open(cache_path, 'r', encoding='utf-8') as f:
+                            cached = json.load(f)
+                            row[step] = cached.get('content', '')
+                    else:
+                        row[step] = None
                 
-                # Get CodeJudge summary
-                # Path: dataset/code_gen_model/eval_model/cj_summary/task_id.json
-                cache_path = os.path.join(cache_dir, dataset, code_gen_model, eval_model, 'cj_summ', f"{task_id}.json")
-                
-                if os.path.exists(cache_path):
-                    with open(cache_path, 'r', encoding='utf-8') as f:
-                        cached = json.load(f)
-                        row['cj_summary'] = cached.get('content', '')
-                else:
-                    row['cj_summary'] = None
-            elif evaluation_method == 'hire_decomposer':
+
+            elif evaluation_method == 'hire':
                 # Get Hire Decomposer analysis
                 # Path: dataset/code_gen_model/eval_model/hire_decomposer/task_id.json
-                cache_path = os.path.join(cache_dir, dataset, code_gen_model, eval_model, 'hire_decomposer', f"{task_id}.json")
-                
-                if os.path.exists(cache_path):
-                    with open(cache_path, 'r', encoding='utf-8') as f:
-                        cached = json.load(f)
-                        row['hire_decomposer'] = cached.get('content', '')
-                else:
-                    row['hire_decomposer'] = None
+                for step in ['hire_decomposer', 'hire_plan_checker']:
+                    cache_path = os.path.join(cache_dir, dataset, code_gen_model, eval_model, step, f"{task_id}.json")
+                    
+                    if os.path.exists(cache_path):
+                        with open(cache_path, 'r', encoding='utf-8') as f:
+                            cached = json.load(f)
+                        row[step] = cached.get('content', '')
+
+                        if step == 'hire_plan_checker':
+                            
+                            verdict_pos_start = row[step].find('"correct": ') + len('"correct": ')
+                            verdict_pos_end = row[step].find(',', verdict_pos_start)
+                            
+                            verdict = row[step][verdict_pos_start:verdict_pos_end]
+                            row["hire_plan_verdict"] = "Yes" if verdict.lower() == 'true' else "No"
+                    else:
+                        row[step] = None
+            
             else:
                 pass
         
