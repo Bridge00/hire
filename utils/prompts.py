@@ -76,11 +76,20 @@ Code:
 {CODE}
 """
 
+
 HIRE_PLAN_CHECKER = """
 Analyze and determine the correctness of the following high-level plan for a code solution to the following task: {PROBLEM}.
 Return the result as a valid JSON object with starting with a key "correct", which is a boolean.
 If "correct" is False, please provide the reasoning in a key "reasoning".
 Plan:
 {PLAN}
+"""
+
+REFINE_PROMPT = """
+Refine the following Python code based on the provided evaluation.
+Problem Statement: {PROBLEM}
+Initial Code: {CODE}
+Evaluation: {EVALUATION}
+Provide your refined implementation in a Python code block.
 """
 
