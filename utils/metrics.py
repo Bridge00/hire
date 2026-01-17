@@ -216,3 +216,73 @@ def create_results_dataframe(dataset: str, code_gen_model: str, eval_model: str 
     
     return pd.DataFrame(rows)
 
+
+def calculate_refinement_transition_metrics(original_log_path: str, refined_log_path: str) -> Dict[str, Any]:
+    """
+    Compares original vs refined execution logs to track test case transitions.
+    
+    Args:
+        original_log_path: Path to the execution log of the initial code.
+        refined_log_path: Path to the execution log of the refined code.
+        
+    Returns:
+        Dictionary with counts of transitions (fail_to_pass, pass_to_fail, etc.)
+    """
+    if not os.path.exists(original_log_path):
+        raise FileNotFoundError(f"Original execution log not found: {original_log_path}")
+    if not os.path.exists(refined_log_path):
+        raise FileNotFoundError(f"Refined execution log not found: {refined_log_path}")
+        
+    with open(original_log_path, 'r', encoding='utf-8') as f:
+        original_data = json.load(f)
+    with open(refined_log_path, 'r', encoding='utf-8') as f:
+        refined_data = json.load(f)
+        
+    orig_results = {res['task_id']: res.get('state', []) for res in original_data.get('results', [])}
+    ref_results = {res['task_id']: res.get('state', []) for res in refined_data.get('results', [])}
+    
+    metrics = {
+        "fail_to_pass": 0,
+        "pass_to_fail": 0,
+        "fail_to_fail": 0,
+        "pass_to_pass": 0,
+        "total_orig_tests": 0,
+        "total_ref_tests": 0,
+        "tasks_improved": 0,
+        "tasks_regressed": 0,
+        "tasks_matched": 0
+    }
+    
+    for task_id, orig_state in orig_results.items():
+        if task_id not in ref_results:
+            continue
+            
+        ref_state = ref_results[task_id]
+        metrics["tasks_matched"] += 1
+        
+        task_f2p = 0
+        task_p2f = 0
+        
+        # Zip compares index by index; assumes same order and count of tests per task
+        for o, r in zip(orig_state, ref_state):
+            metrics["total_orig_tests"] += 1
+            metrics["total_ref_tests"] += 1
+            if not o: # Original Fail
+                if r: # Refined Pass
+                    metrics["fail_to_pass"] += 1
+                    task_f2p += 1
+                else: # Refined Fail
+                    metrics["fail_to_fail"] += 1
+            else: # Original Pass
+                if not r: # Refined Fail
+                    metrics["pass_to_fail"] += 1
+                    task_p2f += 1
+                else: # Refined Pass
+                    metrics["pass_to_pass"] += 1
+                    
+        if task_f2p > task_p2f:
+            metrics["tasks_improved"] += 1
+        elif task_p2f > task_f2p:
+            metrics["tasks_regressed"] += 1
+            
+    return metrics
