@@ -22,6 +22,8 @@ class CodeData(Dataset):
             self.data_path = f'EvoEval_{task_name[task_name.find("_")+1:]}.jsonl'#'leetcode-hard.json'
         elif "core_eval" in task_name.lower(): #f"{self.root}/leetcode-hard.jsonl"
             self.data_path = f'core_eval.jsonl'#'leetcode-hard.json'
+        elif task_name.lower().startswith("apps_"):
+            self.data_path = task_name.lower() + '.jsonl'
         else:
             self.data_path = task_name.lower() + '.jsonl'
         self.data_path = os.path.join(os.getenv("DATA_DIR"), self.data_path)
@@ -56,7 +58,10 @@ class CodeData(Dataset):
         row = self.dataset[index]
 
         tests = row['test']
-        if self.data_path.lower().endswith("humaneval.jsonl") or "leetcode" in self.data_path.lower():
+        if "apps_" in self.data_path.lower():
+            # For APPS, 'test' is the io_data dictionary. We pass it as is.
+            tests = row['test']
+        elif self.data_path.lower().endswith("humaneval.jsonl") or "leetcode" in self.data_path.lower():
             tests = extract_asserts(row['test'])
         elif "humaneval_" in self.data_path.lower():
             # For non-python humaneval, we often want the full test string or 

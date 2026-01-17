@@ -1,5 +1,5 @@
 from dotenv import load_dotenv
-from .utils import get_output_of_test, timeout_exec
+from .utils import get_output_of_test, timeout_exec, run_code_with_io
 #Adapted from textgrad
 
 class PythonEvaluator:
@@ -25,50 +25,84 @@ class PythonEvaluator:
         # raise Exception("You should remove this and remove the comments, but run at your own risk!!!"
         #                 "This is going to run model-generated code on your machine.")
         #print(code)
-        if dataset_name.lower() == 'humaneval':
-            #print('in eval humaneval')
-            def_index = code.find('def')
-            paran_index = code.find('(')
-            #print(code[def_index:paran_index])
-            function_name_string = code[def_index:paran_index].split()[1]
-            #print(function_name_string)
-            tests = [test.replace('candidate', function_name_string) for test in tests if 'assert' in test]
-            #func_test_list = [f'from typing import *\n{code}\n\n \n\n{test}' for test in tests]
-            #print(tests)
-            #print(func_test_list)
-        #else:
-            #print('in another function')
-        func_test_list = [f'from typing import *\n{code}\n\n{test}' for test in tests]
-        print('test')
-        success_tests = []
-        failed_tests = []
-        num_tests = len(func_test_list)
-        for i in range(num_tests):
+        print('tests', tests)
+        
+        print(dataset_name.lower())
+        if isinstance(tests, dict) and "inputs" in tests and "outputs" in tests:
+            # APPS evaluation logic
+            inputs = tests["inputs"]
+            outputs = tests["outputs"]
+            success_tests = []
+            failed_tests = []
+            state = []
+            
+            for i, (in_str, expected_out) in enumerate(zip(inputs, outputs)):
+                try:
+                    # expected_out can be a list or a string in APPS
+                    if isinstance(expected_out, list):
+                        expected_out = expected_out[0]
+                    
+                    actual_out = run_code_with_io(code, in_str)
+                    
+                    # Strip whitespace to be more robust
+                    if actual_out.strip() == expected_out.strip():
+                        success_tests.append(f"Test {i}")
+                        state.append(True)
+                    else:
+                        failed_tests.append(f"Test {i} # ERROR: Expected '{expected_out.strip()}', got '{actual_out.strip()}'")
+                        state.append(False)
+                except Exception as e:
+                    failed_tests.append(f"Test {i} # ERROR: {e}")
+                    state.append(False)
+            
+            state = tuple(state)
+        else:
+            # Existing leetcode/humaneval logic
+            if dataset_name.lower() == 'humaneval':
+                print('in eval humaneval')
+                def_index = code.find('def')
+                paran_index = code.find('(')
+                #print(code[def_index:paran_index])
+                function_name_string = code[def_index:paran_index].split()[1]
+                #print(function_name_string)
+                tests = [test.replace('candidate', function_name_string) for test in tests if 'assert' in test]
+                #func_test_list = [f'from typing import *\n{code}\n\n \n\n{test}' for test in tests]
+                #print(tests)
+                #print(func_test_list)
+            #else:
+                #print('in another function')
+            func_test_list = [f'from typing import *\n{code}\n\n{test}' for test in tests]
+            print('test')
+            success_tests = []
+            failed_tests = []
+            num_tests = len(func_test_list)
+            for i in range(num_tests):
+                #print(func_test_list[i])
+                try:
+                    timeout_exec(func_test_list[i])
+                    print('success')
+                    success_tests += [tests[i]]
+                except Exception as e:
+                    failed_test = tests[i]
+                    if supervised == 'supervised':
+                        try:
+                            output = get_output_of_test(code, failed_test)
+                            asserted_value = tests[i].split("==")[1].strip()
+                            failed_tests += [f"{tests[i]} # ERROR: This unit test fails. Output was {output}, but expected value was: {asserted_value}"]
+                        except Exception as e:
+                            failed_tests += [f"{tests[i]} # ERROR: This unit test fails because the function generated: {e}."]
+                    else:
+                        failed_tests += [f"{tests[i]} # ERROR: This unit test fails."]
 
-            try:
-                timeout_exec(func_test_list[i])
-                success_tests += [tests[i]]
-            except Exception as e:
-                failed_test = tests[i]
-                if supervised == 'supervised':
-                    try:
-                        output = get_output_of_test(code, failed_test)
-                        asserted_value = tests[i].split("==")[1].strip()
-                        failed_tests += [f"{tests[i]} # ERROR: This unit test fails. Output was {output}, but expected value was: {asserted_value}"]
-                    except Exception as e:
-                        failed_tests += [f"{tests[i]} # ERROR: This unit test fails because the function generated: {e}."]
+
+            state = []
+            for test in tests:
+                if test in success_tests:
+                    state += [True]
                 else:
-                    failed_tests += [f"{tests[i]} # ERROR: This unit test fails."]
+                    state += [False]
 
-
-        state = []
-        for test in tests:
-            if test in success_tests:
-                state += [True]
-            else:
-                state += [False]
-
-        state = tuple(state)
+            state = tuple(state)
 
         feedback = "**Tests that the code passed:**\n"
         if len(success_tests) == 0:

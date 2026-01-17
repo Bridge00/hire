@@ -1,5 +1,7 @@
 import errno
 import os
+import sys
+import io
 import signal
 import functools
 import threading
@@ -70,4 +72,26 @@ def get_output_of_test(code, test):
     failing_test = f'from typing import *\n\n{code}\n\nmy_new_var = {test_code}'
     output = timeout_exec_with_return(failing_test)
     return output
-#
+
+@timeout(10)
+def run_code_with_io(code, input_str):
+    """
+    Executes code with redirected stdin and captures stdout.
+    """
+    old_stdin = sys.stdin
+    old_stdout = sys.stdout
+    
+    sys.stdin = io.StringIO(input_str)
+    sys.stdout = io.StringIO()
+    
+    try:
+        # Use a fresh dictionary for globals to avoid pollution, 
+        # but include typical imports if needed.
+        exec_globals = {"__builtins__": __builtins__}
+        exec(code, exec_globals)
+        output = sys.stdout.getvalue()
+    finally:
+        sys.stdin = old_stdin
+        sys.stdout = old_stdout
+        
+    return output
