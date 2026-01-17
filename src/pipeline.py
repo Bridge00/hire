@@ -54,7 +54,7 @@ class PipelineRunner:
                 code = self.generator.generate(prompt, task_id=task_id)
                 code = ul.clean_code(code)  
             else:
-                code = canonical_solution
+                code = prompt + canonical_solution
             
             
              

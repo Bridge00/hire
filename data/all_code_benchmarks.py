@@ -56,23 +56,25 @@ class CodeData(Dataset):
         row = self.dataset[index]
 
         tests = row['test']
-        if "humaneval" in self.data_path.lower():
-
+        if self.data_path.lower().endswith("humaneval.jsonl") or "leetcode" in self.data_path.lower():
             tests = extract_asserts(row['test'])
-
-            row["task_id"] = '_'.join(row["task_id"].split('/'))
-        elif "leetcode" in self.data_path.lower():
-            tests = extract_asserts(row['test'])
+        elif "humaneval_" in self.data_path.lower():
+            # For non-python humaneval, we often want the full test string or 
+            # we need a language-specific splitter. For now, let's keep it as a list with one item
+            # to be compatible with the list-of-tests interface.
+            tests = [row['test']]
         else:
             tests = row['test']
+            if not isinstance(tests, list):
+                tests = [tests]
         # if "evoeval" in self.data_path.lower():
         #     tests = row["inputs"]
         # else:
-        #return row
-        #print(type(row))
-        #print('type of row[0]', type(row[0]))
-        #print('len of row', len(row))
-        return row["task_id"], row["prompt"], tests, row['canonical_solution']
+        task_id = row["task_id"]
+        if "/" in task_id:
+            task_id = '_'.join(task_id.split('/'))
+            
+        return task_id, row["prompt"], tests, row['canonical_solution']
 
     def __len__(self):
         return len(self.dataset)

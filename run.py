@@ -42,7 +42,8 @@ def main():
     print(f"HIRE Mode: {args.hire}")
     print(f"No Eval Mode: {args.no_eval}")
     print(f"---------------------")
-    py_evaluator = PythonEvaluator()
+    from evaluators import get_evaluator
+    py_evaluator = get_evaluator(args.dataset)
     try:
         
         # 1. Load Dataset

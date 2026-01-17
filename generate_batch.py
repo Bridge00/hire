@@ -48,7 +48,7 @@ def generate_code_batch(args, dataset, cache_dir):
                 elif args.dataset == "humaneval_java":
                     programming_language = "java"
                 elif args.dataset == "humaneval_cpp":
-                    programming_language = "C++"
+                    programming_language = "c++"
                 elif args.dataset == "humaneval_go":
                     programming_language = "go"
                 else:
