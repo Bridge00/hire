@@ -158,6 +158,77 @@ def generate_eval_batch(args, dataset, cache_dir, k_index=None, temperature=None
                     eval_user_prompt = up.HIRE_PLAN_CHECKER.format(PROBLEM=problem_prompt, PLAN=plan)
                     active_eval_prompt_type = "hire_plan_checker"
 
+                elif args.eval_prompt in ["hire_implementation_checker_isolated", "hire_implementation_checker_context"]:
+                    decomposed_plan_path = os.path.join(cache_dir, args.dataset, args.code_gen_model, args.eval_model, "hire_decomposer", f"{task_id}.json")
+                    
+                    if not os.path.exists(decomposed_plan_path):
+                        missing_code_count += 1
+                        continue
+                    
+                    with open(decomposed_plan_path, 'r', encoding='utf-8') as f:
+                        plan_data = json.load(f)
+                        plan_content = plan_data.get("content", "")
+                    
+                    try:
+                        # Find JSON block if it's wrapped in markdown
+                        json_start = plan_content.find('{')
+                        json_end = plan_content.rfind('}') + 1
+                        plan_json = json.loads(plan_content[json_start:json_end])
+                        steps = plan_json.get("steps", [])
+                    except Exception as e:
+                        print(f"Error parsing plan JSON for {task_id}: {e}")
+                        continue
+                    
+                    previous_steps_context = ""
+                    for idx, step in enumerate(steps):
+                        step_desc = step.get("explanation", "")
+                        step_code = step.get("code_segment", "")
+                        
+                        step_task_id = f"{task_id}_step_{idx}"
+                        
+                        if args.eval_prompt == "hire_implementation_checker_isolated":
+                            eval_user_prompt = up.HIRE_IMPLEMENTATION_CHECKER_ISOLATED.format(
+                                STEP_DESC=step_desc,
+                                STEP_CODE=step_code
+                            )
+                            active_eval_prompt_type = "hire_implementation_checker_isolated"
+                        else: # context
+                            eval_user_prompt = up.HIRE_IMPLEMENTATION_CHECKER_CONTEXT.format(
+                                PROBLEM=problem_prompt,
+                                PREVIOUS_STEPS=previous_steps_context if previous_steps_context else "None",
+                                CURRENT_STEP_DESC=step_desc,
+                                CURRENT_STEP_CODE=step_code
+                            )
+                            active_eval_prompt_type = "hire_implementation_checker_context"
+                            # Update context for next step
+                            previous_steps_context += f"Step {idx+1}: {step_desc}\nImplementation:\n{step_code}\n\n"
+
+                        # Check cache for this specific step
+                        step_cache_path = os.path.join(cache_dir, args.dataset, args.code_gen_model, args.eval_model, active_eval_prompt_type, f"{step_task_id}.json")
+                        if os.path.exists(step_cache_path):
+                            skipped_count += 1
+                            continue
+
+                        request_body = {
+                            "custom_id": step_task_id,
+                            "method": "POST",
+                            "url": "/v1/chat/completions",
+                            "body": {
+                                "model": args.eval_model,
+                                "messages": [
+                                    {"role": "system", "content": EVAL_SYS},
+                                    {"role": "user", "content": eval_user_prompt}
+                                ],
+                            }
+                        }
+                        if temperature is not None:
+                            request_body["body"]["temperature"] = temperature
+                        
+                        f_out.write(json.dumps(request_body) + "\n")
+                        requests_created += 1
+                    
+                    continue # Skip the single-request logic below for this task
+
                 elif args.eval_prompt == "cj_analysis":
                     eval_user_prompt = up.CODEJUDGE_ANALYSIS.format(PROBLEM=problem_prompt, CODE=cleaned_code)
                     active_eval_prompt_type = "cj_analysis"
@@ -390,7 +461,7 @@ def main():
     
     # Evaluation-specific arguments
     parser.add_argument("--eval_model", type=str, help="Model for evaluation (required if mode=eval)")
-    parser.add_argument("--eval_prompt", type=str, choices=["vanilla", "cj_analysis", "cj_summary", "cj_fault_localization", "hire_decomposer", "hire_plan_checker"], 
+    parser.add_argument("--eval_prompt", type=str, choices=["vanilla", "cj_analysis", "cj_summary", "cj_fault_localization", "hire_decomposer", "hire_plan_checker", "hire_implementation_checker_isolated", "hire_implementation_checker_context"], 
                         help="Evaluation prompt type (required if mode=eval)")
     parser.add_argument("--analysis_model", type=str, help="Model used for analysis (only for cj_summary, defaults to eval_model)")
     parser.add_argument("--n", type=int, default=3, help="Number of steps for hire_decomposer")

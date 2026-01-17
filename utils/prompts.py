@@ -95,3 +95,36 @@ Evaluation: {EVALUATION}
 Provide your refined implementation in a Python code block.
 """
 
+HIRE_IMPLEMENTATION_CHECKER_ISOLATED = """
+You will be provided with a natural language step description and its corresponding code implementation.
+Determine if the code correctly and completely implements the described step.
+Return the result as a valid JSON object starting with a key "correct", which is a boolean.
+Please provide the reasoning in a key "reasoning".
+
+Step Description:
+{STEP_DESC}
+
+Code Implementation:
+{STEP_CODE}
+"""
+
+HIRE_IMPLEMENTATION_CHECKER_CONTEXT = """
+You are checking the implementation of a specific step within a multi-step solution.
+Your task is to determine if the current step is correctly implemented given the overall problem and the context of all previous steps.
+
+Problem Statement:
+{PROBLEM}
+
+Previous Steps and Implementations:
+{PREVIOUS_STEPS}
+
+Current Step to Check:
+{CURRENT_STEP_DESC}
+
+Current Step Implementation:
+{CURRENT_STEP_CODE}
+
+Return the result as a valid JSON object starting with a key "correct", which is a boolean.
+Please provide the reasoning in a key "reasoning".
+"""
+
