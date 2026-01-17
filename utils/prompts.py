@@ -5,12 +5,12 @@ Use a Python code block to write your response. For example:
 print('Hello world!')
 ```"""
 
-#From https://arxiv.org/pdf/2410.02184#page=18.10
 VANILLA_EVAL_BINARY = """
-Determine the correctness of the code snippet. Output Yes or No.
+Determine the correctness of the code snippet.
+Return the result as a valid JSON object with starting with a key "correct", which is a boolean.
+Please provide the reasoning in a key "reasoning".
 Problem Statement: {PROBLEM}
 Code Snippet: {CODE}
-Answer(Yes or No only): 
 """
 
 #From https://arxiv.org/pdf/2410.02184#page=18.10
@@ -80,7 +80,7 @@ Code:
 HIRE_PLAN_CHECKER = """
 Analyze and determine the correctness of the following high-level plan for a code solution to the following task: {PROBLEM}.
 Return the result as a valid JSON object with starting with a key "correct", which is a boolean.
-If "correct" is False, please provide the reasoning in a key "reasoning".
+Please provide the reasoning in a key "reasoning".
 Plan:
 {PLAN}
 """
