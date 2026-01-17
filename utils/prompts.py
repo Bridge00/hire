@@ -1,9 +1,11 @@
 #Code Generator; from https://github.com/zou-group/textgrad/blob/main/evaluation/code_optimization/prompts.py
 CODEGEN_SYS = """You are an AI that only responds with python code, NOT ENGLISH. You will be given a function signature and its docstring by the user. Write your full implementation (restate the function signature).
-Use a Python code block to write your response. For example:
-```python
+Use a {PROGRAM_LANGUAGE} code block to write your response. For example:
+```{PROGRAM_LANGUAGE_LOWER}
 print('Hello world!')
 ```"""
+
+
 
 VANILLA_EVAL_BINARY = """
 Determine the correctness of the code snippet.

@@ -41,14 +41,28 @@ def generate_code_batch(args, dataset, cache_dir):
                     continue
                 
                 # Create Batch Request
+                if args.dataset in set(["leetcode", "humaneval_py"]):
+                    programming_language = "python"
+                elif args.dataset == "humaneval_js":
+                    programming_language = "javascript"
+                elif args.dataset == "humaneval_java":
+                    programming_language = "java"
+                elif args.dataset == "humaneval_cpp":
+                    programming_language = "C++"
+                elif args.dataset == "humaneval_go":
+                    programming_language = "go"
+                else:
+                    assert False, f"Unknown dataset: {args.dataset}"
+
                 request_body = {
-                    "custom_id": task_id,
-                    "method": "POST",
-                    "url": "/v1/chat/completions",
-                    "body": {
+                        "custom_id": task_id,
+                        "method": "POST",
+                        "url": "/v1/chat/completions",
+                        "body": {
                         "model": args.code_gen_model,
                         "messages": [
-                            {"role": "system", "content": up.CODEGEN_SYS},
+                            {"role": "system", "content": up.CODEGEN_SYS.format(PROGRAMM_LANGUAGE=programming_language.upper(), 
+                                                            PROGRAMM_LANGUAGE_LOWER=programming_language)},
                             {"role": "user", "content": prompt}
                         ],
                     }
