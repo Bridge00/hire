@@ -143,9 +143,10 @@ def generate_eval_batch(args, dataset, cache_dir, k_index=None, temperature=None
                     active_eval_prompt_type = "vanilla"
                 elif args.eval_prompt == "hire_decomposer":
                     eval_user_prompt = up.HIRE_DECOMPOSER.format(N=args.n, CODE=cleaned_code)
-                    active_eval_prompt_type = "hire_decomposer"
+                    active_eval_prompt_type = f"hire_decomposer_N_{args.n}"
                 elif args.eval_prompt == "hire_plan_checker":
-                    decomposed_plan_path = os.path.join(cache_dir, args.dataset, args.code_gen_model, args.eval_model, "hire_decomposer", f"{task_id}.json")
+                    decomposed_plan_folder = f"hire_decomposer_N_{args.n}"
+                    decomposed_plan_path = os.path.join(cache_dir, args.dataset, args.code_gen_model, args.eval_model, decomposed_plan_folder, f"{task_id}.json")
                     
                     if not os.path.exists(decomposed_plan_path):
                         missing_code_count += 1
@@ -156,10 +157,11 @@ def generate_eval_batch(args, dataset, cache_dir, k_index=None, temperature=None
                         plan = plan_data.get("content", "")
                     
                     eval_user_prompt = up.HIRE_PLAN_CHECKER.format(PROBLEM=problem_prompt, PLAN=plan)
-                    active_eval_prompt_type = "hire_plan_checker"
+                    active_eval_prompt_type = f"hire_plan_checker_N_{args.n}"
 
                 elif args.eval_prompt in ["hire_implementation_checker_isolated", "hire_implementation_checker_context"]:
-                    decomposed_plan_path = os.path.join(cache_dir, args.dataset, args.code_gen_model, args.eval_model, "hire_decomposer", f"{task_id}.json")
+                    decomposed_plan_folder = f"hire_decomposer_N_{args.n}"
+                    decomposed_plan_path = os.path.join(cache_dir, args.dataset, args.code_gen_model, args.eval_model, decomposed_plan_folder, f"{task_id}.json")
                     
                     if not os.path.exists(decomposed_plan_path):
                         missing_code_count += 1
@@ -191,7 +193,7 @@ def generate_eval_batch(args, dataset, cache_dir, k_index=None, temperature=None
                                 STEP_DESC=step_desc,
                                 STEP_CODE=step_code
                             )
-                            active_eval_prompt_type = "hire_implementation_checker_isolated"
+                            active_eval_prompt_type = f"hire_implementation_checker_isolated_N_{args.n}"
                         else: # context
                             eval_user_prompt = up.HIRE_IMPLEMENTATION_CHECKER_CONTEXT.format(
                                 PROBLEM=problem_prompt,
@@ -199,12 +201,13 @@ def generate_eval_batch(args, dataset, cache_dir, k_index=None, temperature=None
                                 CURRENT_STEP_DESC=step_desc,
                                 CURRENT_STEP_CODE=step_code
                             )
-                            active_eval_prompt_type = "hire_implementation_checker_context"
+                            active_eval_prompt_type = f"hire_implementation_checker_context_N_{args.n}"
                             # Update context for next step
                             previous_steps_context += f"Step {idx+1}: {step_desc}\nImplementation:\n{step_code}\n\n"
 
                         # Check cache for this specific step
-                        step_cache_path = os.path.join(cache_dir, args.dataset, args.code_gen_model, args.eval_model, active_eval_prompt_type, f"{step_task_id}.json")
+                        step_folder = f"{active_eval_prompt_type}_step_{idx + 1}"
+                        step_cache_path = os.path.join(cache_dir, args.dataset, args.code_gen_model, args.eval_model, step_folder, f"{task_id}.json")
                         if os.path.exists(step_cache_path):
                             skipped_count += 1
                             continue

@@ -98,10 +98,19 @@ def process_and_cache_results(results_file: str, dataset: str, code_gen_model: s
                 # custom_id is the task_id
                 task_id = custom_id
                 
+                # Check for HIRE step suffix (e.g., _step_0)
+                active_cache_dir = structured_cache_dir
+                step_match = re.search(r'_step_(\d+)$', task_id)
+                if step_match:
+                    step_idx = int(step_match.group(1))
+                    # Create a subfolder for this step (1-indexed for readability)
+                    active_cache_dir = f"{structured_cache_dir}_step_{step_idx + 1}"
+                    os.makedirs(active_cache_dir, exist_ok=True)
+                    # Strip step suffix from task_id for the filename
+                    task_id = task_id[:step_match.start()]
+                
                 # Save to structured cache
-                # if 'humaneval' in structured_cache_dir.lower():
-                #     task_id = '_'.join(task_id.split('/'))
-                cache_path = os.path.join(structured_cache_dir, f"{task_id}.json")
+                cache_path = os.path.join(active_cache_dir, f"{task_id}.json")
                 with open(cache_path, 'w', encoding='utf-8') as cache_f:
                     json.dump({"content": content}, cache_f)
                 
