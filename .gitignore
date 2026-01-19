@@ -10,3 +10,6 @@
 /execution_logs
 data/APPS.tar.gz
 /data/APPS
+/test_batch_refine
+/test_cache
+/tests
