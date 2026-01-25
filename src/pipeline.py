@@ -2,6 +2,7 @@ from typing import List, Dict, Any
 from src.generator import CodeGenerator
 from src.evaluator import Evaluator
 import utils.llm as ul
+
 class PipelineRunner:
     """
     Runs an experimental pipeline:
@@ -11,70 +12,86 @@ class PipelineRunner:
         3. Collect results
     """
     
-    def __init__(self, generator: CodeGenerator, evaluator: Evaluator, no_eval : bool, execute_solution: bool, dataset_name: str):
+    def __init__(self, generator: CodeGenerator, evaluator: Evaluator, no_eval : bool, execute_solution: bool, dataset_name: str, force: bool = False):
         self.generator = generator
         self.evaluator = evaluator
         self.no_eval = no_eval
         self.execute_solution = execute_solution
         self.dataset_name = dataset_name
+        self.force = force
 
-    def run_experiment(self, dataset, py_evaluator) -> List[Dict[str, Any]]:
+    def _process_task(self, i, item, py_evaluator, total_tasks):
+        # Unpack item based on expected format
+        if isinstance(item, tuple) and len(item) >= 3:
+            task_id, prompt, tests = item[0], item[1], item[2]
+            canonical_solution = item[3] if len(item) > 3 else None
+        else:
+            print(f"Skipping item {i}: unknown format {type(item)}")
+            return None
+
+        if not prompt:
+            return None
+            
+        print(f"Processing task {i} out of {total_tasks} : Task ID: {task_id}...")
+        
+        if not self.execute_solution:
+            # 1. Generate
+            code = self.generator.generate(prompt, task_id=task_id, force=self.force)
+            code = ul.clean_code(code)  
+        else:
+            code = prompt + canonical_solution
+        
+        # 3. Execution Metrics (with Cache)
+        if tests:
+            state, feedback = py_evaluator.evaluate(code, tests, self.dataset_name)
+
+            result = {
+                "task_id": task_id,
+                "prompt": prompt,
+                "generated_code": code,
+                "canonical_solution": canonical_solution,
+                "state": state,
+                "feedback": feedback,
+                "pass_rate": sum(state) / len(state) if state else 0.0
+            }
+            
+            if self.evaluator is not None and not self.no_eval:
+                self.evaluator.evaluate(prompt, code)
+            
+            return result
+        return None
+
+    def run_experiment(self, dataset, py_evaluator, parallel=False, num_workers=4) -> List[Dict[str, Any]]:
         """
         Runs the experiment on the dataset.
         
         Args:
             dataset: CodeData instances
+            py_evaluator: Evaluator instance
+            parallel: Whether to run in parallel
+            num_workers: Number of workers for parallel execution
             
         Returns:
             List of result dictionaries.
         """
         exec_results = []
-        #llm_eval_results = []
         
-        # Iterate over the dataset
-        # CodeData __getitem__ returns: task_id, prompt, tests, canonical_solution
-        for i, item in enumerate(dataset):
-            #print(item.keys())
+        total_tasks = len(dataset)
+        if parallel:
+            from concurrent.futures import ThreadPoolExecutor
+            from tqdm import tqdm
             
-            # Unpack item based on expected format
-            if isinstance(item, tuple) and len(item) >= 3:
-                task_id, prompt, tests = item[0], item[1], item[2]
-                canonical_solution = item[3] if len(item) > 3 else None
-            else:
-                print(f"Skipping item {i}: unknown format {type(item)}")
-                continue
-
-            if not prompt:
-                continue
-                
-            print(f"Processing task {i} out of {len(dataset)} : Task ID: {task_id}...")
-            
-            if not self.execute_solution:
-                # 1. Generate
-                code = self.generator.generate(prompt, task_id=task_id)
-                code = ul.clean_code(code)  
-            else:
-                code = prompt + canonical_solution
-            
-            
-             
-            # 3. Execution Metrics (with Cache)
-            #execution_metrics = {}
-            if tests:
-                state, feedback = py_evaluator.evaluate(code, tests, self.dataset_name)
-
-                exec_results.append({
-                    "task_id": task_id,
-                    "prompt": prompt,
-                    "generated_code": code,
-                    "canonical_solution": canonical_solution,
-                    "state": state,
-                    "feedback": feedback,
-                    "pass_rate": sum(state) / len(state) if state else 0.0
-                })
-
-            if self.evaluator is not None and not self.no_eval:
-                self.evaluator.evaluate(prompt, code)
+            print(f"Running in parallel with {num_workers} workers...")
+            with ThreadPoolExecutor(max_workers=num_workers) as executor:
+                futures = [executor.submit(self._process_task, i, item, py_evaluator, total_tasks) for i, item in enumerate(dataset)]
+                for future in tqdm(futures, total=total_tasks):
+                    res = future.result()
+                    if res:
+                        exec_results.append(res)
+        else:
+            for i, item in enumerate(dataset):
+                res = self._process_task(i, item, py_evaluator, total_tasks)
+                if res:
+                    exec_results.append(res)
 
         return exec_results
-

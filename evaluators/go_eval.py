@@ -58,23 +58,12 @@ var assert = &mockAssert{&mockT{}}
                         if line and not line.startswith("//"):
                             import_lines.add(line)
                 # Single-line: import "foo" or import alias "foo"
-                # Use a regex that doesn't match inside the ( ) blocks we already processed
-                # This is a bit simplified but should work for HumanEval
                 for m in re.findall(r'^import\s+((?:\w+\s+)?".*?")', text, re.MULTILINE):
                     import_lines.add(m.strip())
 
             get_imports(code)
             get_imports(test)
-
-            # Filter out problematic imports
-            filtered_imports = []
-            for imp in import_lines:
-                if "github.com/stretchr/testify/assert" in imp: continue
-                if '"testing"' in imp: continue
-                filtered_imports.append(imp)
             
-            import_block = "import (\n" + "\n".join(filtered_imports) + "\n)"
-
             # 3. Clean up source: remove package and import lines
             def clean_source(text):
                 text = re.sub(r'^package\s+\w+\s*', '', text, flags=re.MULTILINE)
@@ -84,6 +73,90 @@ var assert = &mockAssert{&mockT{}}
 
             clean_code = clean_source(code)
             clean_test = clean_source(test)
+            combined_clean_src = clean_code + "\n" + clean_test
+            
+            # --- Auto-Injection Logic ---
+            # Common packages often missing in HumanEval Go
+            # We use a stricter check: Pkg.Member (capitalized) to avoid matching "strings." at end of sentences in comments.
+            # Example: "list of strings." should not trigger import "strings".
+            # But "strings.Split" should.
+            
+            def uses_pkg(pkg, text):
+                # Check for "pkg.Member" where Member starts with A-Z
+                # This covers standard library usage which is always exported (Capitalized)
+                return re.search(r'\b' + re.escape(pkg) + r'\.[A-Z]', text) is not None
+
+            if uses_pkg("strings", combined_clean_src) and '"strings"' not in import_lines:
+                import_lines.add('"strings"')
+            if uses_pkg("math", combined_clean_src) and '"math"' not in import_lines:
+                import_lines.add('"math"')
+            if uses_pkg("sort", combined_clean_src) and '"sort"' not in import_lines:
+                import_lines.add('"sort"')
+            if uses_pkg("regexp", combined_clean_src) and '"regexp"' not in import_lines:
+                import_lines.add('"regexp"')
+            if uses_pkg("strconv", combined_clean_src) and '"strconv"' not in import_lines:
+                import_lines.add('"strconv"')
+            if uses_pkg("time", combined_clean_src) and '"time"' not in import_lines:
+                import_lines.add('"time"')
+            # math/rand is special, usage is 'rand.Intn' etc.
+            if uses_pkg("rand", combined_clean_src) and '"math/rand"' not in import_lines:
+                import_lines.add('"math/rand"')
+
+            # Filter out problematic imports
+            filtered_imports = []
+            for imp in import_lines:
+                if "github.com/stretchr/testify/assert" in imp: continue
+                if '"testing"' in imp: continue
+                filtered_imports.append(imp)
+            
+            # --- Unused Import Cleaning ---
+            # Go is strict about unused imports. We need to be careful.
+            # A simple heuristic: check if the package name appears in the source code.
+            # This is not perfect but covers 99% of cases.
+            final_imports = []
+            for imp in filtered_imports:
+                pkg_name = imp.strip('"') # "math" -> math
+                if "/" in pkg_name: 
+                    # "math/rand" -> rand
+                    pkg_name = pkg_name.split("/")[-1]
+                
+                # Special cases where package usage doesn't match import name exactly
+                # But for standard libs above, it usually does.
+                # Also, we ALWAYS keep fmt, reflect, os because our harness uses them.
+                if pkg_name in ["fmt", "reflect", "os"]:
+                    final_imports.append(imp)
+                    continue
+
+                # Check usage in CLEANED source using strict check
+                # Note: If the code ALREADY had the import, we should be slightly more lenient
+                # because the user might have aliased it or used it weirdly?
+                # But for safely removing "strings" when it's only in a comment, strict is better.
+                # If legitimate usage involves non-capitalized member (impossible for external pkgs), we might break it.
+                # But standard libs are fine.
+                
+                if uses_pkg(pkg_name, combined_clean_src) or \
+                   re.search(r'\b' + re.escape(pkg_name) + r'\b', combined_clean_src): 
+                   # Wait, the second clause `pkg_name + \b` would match "strings" in "list of strings."
+                   # We MUST remove the broad check if we want to fix Go_158.
+                   # BUT, we need to allow `var _ = strings.Split`.
+                   # `uses_pkg` checks `strings.S`.
+                   # What if they use `type Alias = strings.Builder`? `strings.B` matched.
+                   # What if they use `strings` in a way that doesn't have a dot?
+                   # No, to access it you need a dot. or `.` import (which we don't do).
+                   # So `pkg.Member` is required.
+                   
+                   # However, I should be careful.
+                   # Let's trust `uses_pkg` for the standard libs we know.
+                   if pkg_name in ["strings", "math", "sort", "regexp", "strconv", "time", "rand"]:
+                       if uses_pkg(pkg_name, combined_clean_src):
+                           final_imports.append(imp)
+                   else:
+                       # Fallback for others (like internal ones if any?)
+                       if re.search(r'\b' + re.escape(pkg_name) + r'\.', combined_clean_src):
+                           final_imports.append(imp)
+
+            import_block = "import (\n" + "\n".join(final_imports) + "\n)"
+
             # Replace *testing.T with our mock
             clean_test = clean_test.replace("*testing.T", "*testingT")
 
@@ -107,6 +180,13 @@ func (a *mockAssert) True(value bool, msg ...interface{}) { if !value { fmt.Fpri
 func (a *mockAssert) False(value bool, msg ...interface{}) { if value { fmt.Fprintln(os.Stderr, "Expected false, got true"); os.Exit(1) } }
 func (a *mockAssert) NotNil(value interface{}, msg ...interface{}) { if value == nil { os.Exit(1) } }
 func (a *mockAssert) Nil(value interface{}, msg ...interface{}) { if value != nil { os.Exit(1) } }
+func (a *mockAssert) Len(object interface{}, length int, msg ...interface{}) {
+    v := reflect.ValueOf(object)
+    if v.Len() != length { os.Exit(1) }
+}
+func (a *mockAssert) ElementsMatch(listA, listB interface{}, msg ...interface{}) {
+    if !reflect.DeepEqual(listA, listB) { os.Exit(1) }
+}
 
 var assert = &mockAssert{}
 """

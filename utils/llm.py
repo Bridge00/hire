@@ -61,7 +61,8 @@ def _get_structured_cache_path(model: str, dataset: str = None, task_id: str = N
 
 def get_llm_response(sys_prompt: str, user_prompt: str, model: str, 
                      dataset: str = None, task_id: str = None,
-                     eval_model: str = None, eval_prompt_type: str = None) -> str:
+                     eval_model: str = None, eval_prompt_type: str = None,
+                     force: bool = False) -> str:
     """
     Get LLM response with caching.
     
@@ -87,7 +88,7 @@ def get_llm_response(sys_prompt: str, user_prompt: str, model: str,
         eval_prompt_type=eval_prompt_type
     )
     
-    if structured_cache_path and os.path.exists(structured_cache_path):
+    if not force and structured_cache_path and os.path.exists(structured_cache_path):
         print(f'Reading from structured cache: {structured_cache_path}')
         with open(structured_cache_path, "r", encoding="utf-8") as f:
             return json.load(f)["content"]
@@ -96,7 +97,7 @@ def get_llm_response(sys_prompt: str, user_prompt: str, model: str,
     cache_key = _get_cache_key(sys_prompt, user_prompt, model)
     hash_cache_path = os.path.join(os.getenv("CACHE_DIR"), f"{cache_key}.json")
     
-    if os.path.exists(hash_cache_path):
+    if not force and os.path.exists(hash_cache_path):
         print(f'Reading from hash cache: {hash_cache_path}')
         with open(hash_cache_path, "r", encoding="utf-8") as f:
             return json.load(f)["content"]
@@ -142,7 +143,16 @@ def get_llm_response(sys_prompt: str, user_prompt: str, model: str,
 
 def clean_code(code):
     if isinstance(code, list):
-        return code[0].split("```python")[1].split("```")[0]
-    else:
-        return code.split("```python")[1].split("```")[0]
- 
+        code = code[0]
+    
+    # Try to find code between markdown blocks
+    # This regex looks for ```[language]\n[code]\n```
+    match = re.search(r"```(?:\w+)?\n?(.*?)\n?```", code, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    
+    # Fallback: if no code block but backticks exist, try to strip them
+    if "```" in code:
+        return code.split("```")[-2].strip()
+        
+    return code.strip()

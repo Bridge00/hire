@@ -6,31 +6,26 @@ from src.generator import CodeGenerator
 from src.evaluator import Evaluator
 from data.all_code_benchmarks import CodeData
 from evaluators.py_eval import PythonEvaluator
+from evaluators import get_evaluator
 
 
-def get_evaluator(evaluation_method: str, model_name: str, hire: bool) -> Evaluator:
-    if evaluation_method == "vanilla":
-        evaluator = VanillaEvaluator
-    elif evaluation_method == "codejudge":
-        evaluator = CodeJudgeEvaluator
-    else:
-        raise ValueError(f"Unknown evaluation method: {evaluation_method}")
-
-    return evaluator(model_name, hire)
 def main():
     parser = argparse.ArgumentParser(description="Run experiment pipeline.")
     
     parser.add_argument("--dataset", type=str, required=True, help="Name of the dataset to use (e.g., 'dummy')")
     parser.add_argument("--evaluation_method", type=str, required=False, help="Base evaluation method (e.g., 'vanilla', 'codejudge')")
-    parser.add_argument("--code_gen_model", type=str, required=True, help="Model to use (e.g., 'gpt-4o', 'gpt-4o-mini', 'Qwen/Qwen3-8B-Base')")
+    parser.add_argument("--code_gen_model", type=str, required=False, help="Model to use (e.g., 'gpt-4o', 'gpt-4o-mini', 'Qwen/Qwen3-8B-Base')")
     parser.add_argument("--eval_model", type=str, required=False, help="Model to use (e.g., 'gpt-4o', 'gpt-4o-mini', 'Qwen/Qwen3-8B-Base')")
     parser.add_argument("--seed", type=int, default=95, help="Random seed for reproducibility")
-    parser.add_argument("--hire", action="store_true", help="Enable HIRE (Hierarchical Reference-Free Code Evaluation)")
+
     parser.add_argument("--start_problem", type=int, default=0, help="Start problem index")
     parser.add_argument("--end_problem", type=int, default=None, help="End problem index")
     parser.add_argument("--no_eval", action="store_true", help="Skip LLM evaluation and only run execution tests")
     parser.add_argument("--execute_solution", action="store_true", help="Execute canonical solution instead of generated code")
-    
+    parser.add_argument("--force", action="store_true", help="Force re-generation of LLM responses (bypass cache)")
+    parser.add_argument("--parallel", action="store_true", help="Run benchmarks in parallel")
+    parser.add_argument("--num_workers", type=int, default=4, help="Number of workers for parallel execution")
+   
     args = parser.parse_args()
     
     assert args.end_problem is None or args.start_problem < args.end_problem, "start_problem must be less than end_problem if end_problem is not None"
@@ -39,10 +34,9 @@ def main():
     print(f"LLM Eval Method: {args.evaluation_method}")
     print(f"Code Gen Model: {args.code_gen_model}")
     print(f"Eval Model: {args.eval_model}")
-    print(f"HIRE Mode: {args.hire}")
     print(f"No Eval Mode: {args.no_eval}")
     print(f"---------------------")
-    from evaluators import get_evaluator
+
     py_evaluator = get_evaluator(args.dataset)
     try:
         
@@ -58,10 +52,10 @@ def main():
         evaluator = None if args.evaluation_method is None else Evaluator(args.eval_model, dataset=args.dataset, code_gen_model=args.code_gen_model)
         
         # 3. Initialize Pipeline
-        runner = PipelineRunner(generator, evaluator, no_eval=args.no_eval, execute_solution=args.execute_solution, dataset_name=args.dataset)
-        
+        runner = PipelineRunner(generator, evaluator, no_eval=args.no_eval, execute_solution=args.execute_solution, dataset_name=args.dataset, force=args.force)
+       
         # 4. Run
-        results = runner.run_experiment(code_dataset_subset, py_evaluator)
+        results = runner.run_experiment(code_dataset_subset, py_evaluator, parallel=args.parallel, num_workers=args.num_workers)
         
         # 5. Logging
         import subprocess
@@ -85,10 +79,12 @@ def main():
 
         log_dir = "execution_logs"
         # Naming convention for execution logs
+        range_suffix = f"_{args.start_problem}_{args.end_problem}"
+        
         if args.execute_solution:
-            filename = f"{log_dir}/{args.dataset}_solutions_exec.json"
+            filename = f"{log_dir}/{args.dataset}_solutions_exec{range_suffix}.json"
         else:
-            filename = f"{log_dir}/seed_{args.seed}_{args.dataset}_{args.code_gen_model}_exec.json"
+            filename = f"{log_dir}/seed_{args.seed}_{args.dataset}_{args.code_gen_model}_exec{range_suffix}.json"
             
         os.makedirs(log_dir, exist_ok=True)
         

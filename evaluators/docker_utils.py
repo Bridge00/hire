@@ -30,8 +30,8 @@ class DockerRunner:
             # Using -w to set the working directory to /app
             docker_cmd = [
                 "docker", "run", "--rm",
-                "-v", f"{os.path.abspath(tmpdir)}:/app",
-                "-w", "/app",
+                "-v", f"{os.path.abspath(tmpdir)}:/app/work",
+                "-w", "/app/work",
                 self.image_name,
                 "sh", "-c", command
             ]

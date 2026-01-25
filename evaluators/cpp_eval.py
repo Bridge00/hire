@@ -10,13 +10,19 @@ class CppEvaluator(BaseDockerEvaluator):
         # If tests is a list, we run each.
         
         for test in tests:
+            # Wrap the test in main() if it's an individual assertion
+            if "main(" not in test:
+                test_wrapped = f"int main() {{ {test} return 0; }}"
+            else:
+                test_wrapped = test
+
             # Check if test already contains #include
             # Solution usually has includes from prompt or we might need to add common ones
-            full_code = f"#include <iostream>\n#include <vector>\n#include <string>\n#include <algorithm>\n#include <cmath>\n#include <map>\n#include <set>\n#include <assert.h>\nusing namespace std;\n\n{code}\n\n{test}"
+            full_code = f"#include <iostream>\n#include <vector>\n#include <string>\n#include <algorithm>\n#include <cmath>\n#include <map>\n#include <set>\n#include <assert.h>\nusing namespace std;\n\n{code}\n\n{test_wrapped}"
             
             # Write to solution.cpp, compile, and run
             files = {"solution.cpp": full_code}
-            compile_cmd = "g++ -O3 solution.cpp -o solution"
+            compile_cmd = "g++ -O3 solution.cpp -o solution -lcrypto"
             run_cmd = "./solution"
             
             # Run compilation

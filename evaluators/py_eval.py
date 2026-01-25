@@ -58,7 +58,7 @@ class PythonEvaluator:
             state = tuple(state)
         else:
             # Existing leetcode/humaneval logic
-            if dataset_name.lower() == 'humaneval':
+            if 'humaneval' in dataset_name.lower():
                 print('in eval humaneval')
                 def_index = code.find('def')
                 paran_index = code.find('(')
