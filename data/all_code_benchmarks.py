@@ -478,7 +478,7 @@ class CodeData(Dataset):
         if "/" in task_id:
             task_id = '_'.join(task_id.split('/'))
             
-        return task_id, row["prompt"], tests, row['canonical_solution']
+        return task_id, row["prompt"], tests, row['canonical_solution'], row
 
     def __len__(self):
         return len(self.dataset)
