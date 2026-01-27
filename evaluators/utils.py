@@ -21,8 +21,12 @@ def timeout(seconds=10, error_message=os.strerror(errno.ETIME)):
     :return:
     """
     def decorator(func):
-        def _handle_timeout(signum, frame):
-            raise TimeoutError(error_message)
+        def _handle_timeout(signum=None, frame=None):
+            if signum is not None:
+                raise TimeoutError(error_message)
+            # Windows: Interrupt main thread
+            import _thread
+            _thread.interrupt_main()
 
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
@@ -39,7 +43,11 @@ def timeout(seconds=10, error_message=os.strerror(errno.ETIME)):
             timer = threading.Timer(seconds, _handle_timeout)
             timer.start()
             try:
-                return func(*args, **kwargs)
+                try:
+                    return func(*args, **kwargs)
+                except KeyboardInterrupt:
+                    # Convert interrupt to TimeoutError
+                    raise TimeoutError(error_message)
             finally:
                 timer.cancel()
 

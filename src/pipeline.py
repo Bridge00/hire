@@ -12,19 +12,20 @@ class PipelineRunner:
         3. Collect results
     """
     
-    def __init__(self, generator: CodeGenerator, evaluator: Evaluator, no_eval : bool, execute_solution: bool, dataset_name: str, force: bool = False):
+    def __init__(self, generator: CodeGenerator, evaluator: Evaluator, no_eval : bool, execute_solution: bool, dataset_name: str, force: bool = False, eval_source: str = None):
         self.generator = generator
         self.evaluator = evaluator
         self.no_eval = no_eval
         self.execute_solution = execute_solution
         self.dataset_name = dataset_name
         self.force = force
+        self.eval_source = eval_source
 
     def _process_task(self, i, item, py_evaluator, total_tasks):
         # Unpack item based on expected format
-        if isinstance(item, tuple) and len(item) >= 3:
-            task_id, prompt, tests = item[0], item[1], item[2]
-            canonical_solution = item[3] if len(item) > 3 else None
+        if isinstance(item, tuple) and len(item) >= 4:
+            task_id, prompt, tests, canonical_solution = item[0], item[1], item[2], item[3]
+            full_item = item[4] if len(item) > 4 else {}
         else:
             print(f"Skipping item {i}: unknown format {type(item)}")
             return None
@@ -34,7 +35,12 @@ class PipelineRunner:
             
         print(f"Processing task {i} out of {total_tasks} : Task ID: {task_id}...")
         
-        if not self.execute_solution:
+        if self.eval_source:
+             if self.eval_source not in full_item:
+                 print(f"Warning: eval_source '{self.eval_source}' not found for task {task_id}. Skipping.")
+                 return None
+             code = prompt + full_item[self.eval_source]
+        elif not self.execute_solution:
             # 1. Generate
             code = self.generator.generate(prompt, task_id=task_id, force=self.force)
             code = ul.clean_code(code)  

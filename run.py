@@ -22,6 +22,7 @@ def main():
     parser.add_argument("--end_problem", type=int, default=None, help="End problem index")
     parser.add_argument("--no_eval", action="store_true", help="Skip LLM evaluation and only run execution tests")
     parser.add_argument("--execute_solution", action="store_true", help="Execute canonical solution instead of generated code")
+    parser.add_argument("--eval_source", type=str, default=None, help="Source key to evaluate (e.g., 'incorrect_solution', 'misleading_task'). Overrides execute_solution code selection.")
     parser.add_argument("--force", action="store_true", help="Force re-generation of LLM responses (bypass cache)")
     parser.add_argument("--parallel", action="store_true", help="Run benchmarks in parallel")
     parser.add_argument("--num_workers", type=int, default=4, help="Number of workers for parallel execution")
@@ -52,7 +53,7 @@ def main():
         evaluator = None if args.evaluation_method is None else Evaluator(args.eval_model, dataset=args.dataset, code_gen_model=args.code_gen_model)
         
         # 3. Initialize Pipeline
-        runner = PipelineRunner(generator, evaluator, no_eval=args.no_eval, execute_solution=args.execute_solution, dataset_name=args.dataset, force=args.force)
+        runner = PipelineRunner(generator, evaluator, no_eval=args.no_eval, execute_solution=args.execute_solution, dataset_name=args.dataset, force=args.force, eval_source=args.eval_source)
        
         # 4. Run
         results = runner.run_experiment(code_dataset_subset, py_evaluator, parallel=args.parallel, num_workers=args.num_workers)
@@ -81,7 +82,9 @@ def main():
         # Naming convention for execution logs
         range_suffix = f"_{args.start_problem}_{args.end_problem}"
         
-        if args.execute_solution:
+        if args.eval_source:
+             filename = f"{log_dir}/{args.dataset}_{args.eval_source}_exec{range_suffix}.json"
+        elif args.execute_solution:
             filename = f"{log_dir}/{args.dataset}_solutions_exec{range_suffix}.json"
         else:
             filename = f"{log_dir}/seed_{args.seed}_{args.dataset}_{args.code_gen_model}_exec{range_suffix}.json"

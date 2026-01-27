@@ -146,10 +146,27 @@ def parse_filename_metadata(results_file: str):
     """
     basename = os.path.basename(results_file)
     
+    # KNOWN PROMPTS (from generate_batch.py/utils.prompts)
+    # We use these to robustly split the filename.
+    # Order matters: more specific (longer) prompts first to avoid partial matches
+    KNOWN_PROMPTS = [
+        "hire_implementation_checker_context", 
+        "hire_implementation_checker_isolated",
+        "hire_plan_checker",
+        "hire_decomposer",
+        "cj_fault_localization",
+        "cj_analysis",
+        "cj_summary",
+        "vanilla"
+    ]
+    
+    # Sort by length descending to match longest first
+    KNOWN_PROMPTS.sort(key=len, reverse=True)
+
     # Try evaluation pattern first (more specific)
-    # Pattern: dataset_code_model_CODEMODEL_PROMPTTYPE_eval_eval_EVALMODEL_START_END_results.jsonl
-    eval_pattern = r'(.+?)_code_model_(.+?)_(.+?)_eval_eval_(.+?)_\d+_\d+_results\.jsonl'
-    match = re.match(eval_pattern, basename)
+    # Pattern 1: dataset_code_model_CODEMODEL_PROMPTTYPE_eval_eval_EVALMODEL_START_END_results.jsonl
+    eval_pattern_model = r'(.+?)_code_model_(.+?)_(.+?)_eval_eval_(.+?)_\d+_\d+_results\.jsonl'
+    match = re.match(eval_pattern_model, basename)
     
     if match:
         dataset = match.group(1)
@@ -157,9 +174,123 @@ def parse_filename_metadata(results_file: str):
         eval_prompt_type = match.group(3)
         eval_model = match.group(4)
         return dataset, code_gen_model, eval_model, eval_prompt_type
+
+    # Pattern 2: dataset_SOURCE_PROMPTTYPE_eval_eval_EVALMODEL_START_END_results.jsonl (for eval_source)
+    # Strategy: Iterate through known prompts and check if the filename contains _{prompt}_eval_eval_
     
-    # Try code generation pattern
-    # Pattern: dataset_MODEL_START_END_results.jsonl
+    KNOWN_DATASETS_UNDERSCORE = ["humaneval_py", "humaneval_java", "humaneval_js", "humaneval_cpp", "humaneval_go"]
+
+    for prompt in KNOWN_PROMPTS:
+        # Check for k-variant (e.g. vanilla_k1)
+        # Using a regex that optionally matches _k\d+ suffix for the prompt
+        # We need to construct a regex dynamically or just check strings.
+        # String check is safer.
+        
+        # Check standard prompt
+        anchor = f"_{prompt}_eval_eval_"
+        if anchor in basename:
+            parts = basename.split(anchor)
+            left_part = parts[0] # dataset_SOURCE
+            right_part = parts[1] # EVALMODEL_START_END...
+            
+            # Extract EVALMODEL from right_part
+            # right_part looks like: gpt-4o-mini_0_39_results.jsonl
+            # match until the last digits
+            eval_model_match = re.match(r'(.+?)_\d+_\d+_results\.jsonl', right_part)
+            if eval_model_match:
+                eval_model = eval_model_match.group(1)
+                eval_prompt_type = prompt
+                
+                # Split left_part into dataset and source
+                dataset = None
+                code_gen_model = None
+                
+                # specific check for known datasets with underscore
+                for known_ds in KNOWN_DATASETS_UNDERSCORE:
+                    if left_part.startswith(known_ds + "_"):
+                        dataset = known_ds
+                        code_gen_model = left_part[len(known_ds)+1:]
+                        break
+                
+                if not dataset and '_' in left_part:
+                    dataset_split = left_part.split('_', 1)
+                    dataset = dataset_split[0]
+                    code_gen_model = dataset_split[1]
+                
+                if dataset and code_gen_model:
+                     return dataset, code_gen_model, eval_model, eval_prompt_type
+
+        # Check k-variant (e.g. vanilla_k3)
+        # Regex for anchor: _{prompt}_k\d+_eval_eval_
+        k_anchor_pattern = fr"_{prompt}_k(\d+)_eval_eval_"
+        k_match = re.search(fr"{k_anchor_pattern}(.+?)_\d+_\d+_results\.jsonl", basename)
+        
+        if k_match:
+            # We found a match for k-variant
+            match_start = k_match.start()
+            left_part = basename[:match_start]
+            
+            # anchor: _vanilla_k1_eval_eval_
+            # promt type should be: vanilla_k1
+            # k_match.group(1) is the k index (e.g. "1")
+            k_val = k_match.group(1)
+            eval_prompt_type = f"{prompt}_k{k_val}"
+            
+            eval_model = k_match.group(2)
+            
+            # Split left_part into dataset and source
+            dataset = None
+            code_gen_model = None
+            
+            for known_ds in KNOWN_DATASETS_UNDERSCORE:
+                if left_part.startswith(known_ds + "_"):
+                    dataset = known_ds
+                    code_gen_model = left_part[len(known_ds)+1:]
+                    break
+            
+            if not dataset and '_' in left_part:
+                dataset_split = left_part.split('_', 1)
+                dataset = dataset_split[0]
+                code_gen_model = dataset_split[1]
+            
+            if dataset and code_gen_model:
+                return dataset, code_gen_model, eval_model, eval_prompt_type
+
+        # Check N-variant (e.g. hire_decomposer_N_3)
+        # Regex for anchor: _{prompt}_N\d+_eval_eval_
+        
+        n_anchor_pattern = fr"_{prompt}_N_(\d+)_eval_eval_"
+        n_match = re.search(fr"{n_anchor_pattern}(.+?)_\d+_\d+_results\.jsonl", basename)
+        
+        if n_match:
+             match_start = n_match.start()
+             left_part = basename[:match_start]
+             
+             # n_match.group(1) is the N value (e.g. "3")
+             n_val = n_match.group(1)
+             eval_prompt_type = f"{prompt}_N_{n_val}"
+             
+             eval_model = n_match.group(2)
+             
+             # Split left_part into dataset and source
+             dataset = None
+             code_gen_model = None
+             
+             for known_ds in KNOWN_DATASETS_UNDERSCORE:
+                if left_part.startswith(known_ds + "_"):
+                    dataset = known_ds
+                    code_gen_model = left_part[len(known_ds)+1:]
+                    break
+             
+             if not dataset and '_' in left_part:
+                dataset_split = left_part.split('_', 1)
+                dataset = dataset_split[0]
+                code_gen_model = dataset_split[1]
+             
+             if dataset and code_gen_model:
+                return dataset, code_gen_model, eval_model, eval_prompt_type
+
+    # Fallback to generic code generation pattern if no eval pattern matched
     code_pattern = r'(.+?)_(.+?)_\d+_\d+_results\.jsonl'
     match = re.match(code_pattern, basename)
     
