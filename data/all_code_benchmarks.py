@@ -6,6 +6,15 @@ from dotenv import load_dotenv
 load_dotenv()
 
 def extract_asserts(text: str):
+    # Heuristic: If tests involve loops, definitions, or imports, keep them monolithic
+    # because splitting by 'assert' line will lose context (setup variables).
+    # Almost all HumanEval tasks use 'def check(candidate):', so we default to monolithic
+    # unless it's a very simple list of asserts.
+    
+    triggers = ["def ", "for ", "while ", "import ", "random."]
+    if any(t in text for t in triggers):
+        return [text]
+        
     lines = text.splitlines()
     return [line.strip() for line in lines if line.strip().startswith("assert")]
 
