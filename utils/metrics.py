@@ -94,7 +94,7 @@ def calculate_metrics(results: Dict[str, Any]) -> Dict[str, float]:
 
 def create_results_dataframe(dataset: str, code_gen_model: str, eval_model: str = None, 
                               evaluation_method: str = None, 
-                              seed: int = 95) -> pd.DataFrame:
+                              seed: int = 95, N = 3) -> pd.DataFrame:
     """
     Creates a pandas DataFrame combining execution results and LLM evaluations.
     
@@ -109,27 +109,72 @@ def create_results_dataframe(dataset: str, code_gen_model: str, eval_model: str 
         DataFrame with columns: task_id, prompt, generated_code, state, feedback, pass_rate,
         and LLM evaluation columns (vanilla_eval or cj_analysis + cj_summary for CodeJudge)
     """
-    # Load execution results
+    # Define override keys
+    PASS_RATE_1_KEYS = {"canonical_solution", "reverse_authority", "misleading_task_canonical"}
+    PASS_RATE_0_KEYS = {"misleading_task_incorrect",  "authority", "incorrect_solution"}
+    
+    # Load execution results or fallback to dataset
     exec_log_path = os.path.join(os.getenv("ROOT_DIR"), "execution_logs", f"seed_{seed}_{dataset}_{code_gen_model}_exec.json")
     
-    if not os.path.exists(exec_log_path):
+    exec_data_results = []
+    
+    if os.path.exists(exec_log_path):
+        with open(exec_log_path, 'r', encoding='utf-8') as f:
+            exec_data = json.load(f)
+            exec_data_results = exec_data.get('results', [])
+    elif code_gen_model in PASS_RATE_1_KEYS or code_gen_model in PASS_RATE_0_KEYS:
+        # Fallback: Load dataset directly if log is missing for override keys
+        try:
+            data_obj = CodeData(dataset)
+            # data_obj is iterable/indexable. We need to reconstruct similar dict structure.
+            # CodeData[i] -> (task_id, prompt, ..., ...)
+            
+            # Note: The usage below iterates exec_data['results'].
+            # We'll construct a mock list.
+            for i in range(len(data_obj)):
+                 # CodeData returns: task_id, prompt, test_cases, canonical_solution, raw_row
+                 tid, prmpt, _, canon, _ = data_obj[i]
+                 
+                 # For generated_code, we ideally want what was used. 
+                 # If we don't have it, we put canonical or empty string.
+                 # User said "we don't need to look into execution logs", so code might not strictly matter for metrics unless we show it.
+                 # We'll use canonical so it's not empty.
+                 
+                 exec_data_results.append({
+                     'task_id': tid,
+                     'prompt': prmpt,
+                     'generated_code': canon, # Placeholder
+                     'state': [],
+                     'feedback': '',
+                     'pass_rate': 0.0 # Will be overridden
+                 })
+                 
+        except Exception as e:
+            print(f"Warning: Could not load dataset for fallback: {e}")
+            raise FileNotFoundError(f"Execution log not found and fallback failed: {exec_log_path}")
+    else:
+        # Not a special key, so log MUST exist
         raise FileNotFoundError(f"Execution log not found: {exec_log_path}")
-    
-    with open(exec_log_path, 'r', encoding='utf-8') as f:
-        exec_data = json.load(f)
-    
+
     
     # Build rows
     rows = []
     cache_dir = os.getenv("CACHE_DIR", ".cache")
     
-    for result in exec_data['results']:
+    for result in exec_data_results:
         task_id = result['task_id']
         prompt = result['prompt']
         generated_code = result['generated_code']
         state = tuple(result.get('state', []))
         feedback = result.get('feedback', '')
-        pass_rate = result.get('pass_rate', 0.0)
+        
+        # Apply Overrides
+        if code_gen_model in PASS_RATE_1_KEYS:
+            pass_rate = 1.0
+        elif code_gen_model in PASS_RATE_0_KEYS:
+            pass_rate = 0.0
+        else:
+            pass_rate = result.get('pass_rate', 0.0)
         
         row = {
             'task_id': task_id,
@@ -153,6 +198,11 @@ def create_results_dataframe(dataset: str, code_gen_model: str, eval_model: str 
                     with open(cache_path, 'r', encoding='utf-8') as f:
                         cached = json.load(f)
                         row['vanilla'] = cached.get('content', '')
+                        verdict_pos_start = row['vanilla'].find('"correct": ') + len('"correct": ')
+                        verdict_pos_end = row['vanilla'].find(',', verdict_pos_start)
+                        
+                        verdict = row['vanilla'][verdict_pos_start:verdict_pos_end]
+                        row["vanilla"] = "Yes" if verdict.lower() == 'true' else "No"
                 else:
                     row['vanilla'] = None
             elif vanilla_k_match:
@@ -191,7 +241,8 @@ def create_results_dataframe(dataset: str, code_gen_model: str, eval_model: str 
             elif evaluation_method == 'hire':
                 # Get Hire Decomposer analysis
                 # Path: dataset/code_gen_model/eval_model/hire_decomposer/task_id.json
-                for step in ['hire_decomposer', 'hire_plan_checker']:
+                # 1. Decomposer and Plan Checker
+                for step in [f'hire_decomposer_N_{N}', f'hire_plan_checker_N_{N}']:
                     cache_path = os.path.join(cache_dir, dataset, code_gen_model, eval_model, step, f"{task_id}.json")
                     
                     if os.path.exists(cache_path):
@@ -199,15 +250,96 @@ def create_results_dataframe(dataset: str, code_gen_model: str, eval_model: str 
                             cached = json.load(f)
                         row[step] = cached.get('content', '')
 
-                        if step == 'hire_plan_checker':
-                            
+                        if step == f'hire_plan_checker_N_{N}':
                             verdict_pos_start = row[step].find('"correct": ') + len('"correct": ')
                             verdict_pos_end = row[step].find(',', verdict_pos_start)
-                            
-                            verdict = row[step][verdict_pos_start:verdict_pos_end]
+                            # Handle case where comma might not exist (e.g. last element), use closing brace
+                            if verdict_pos_end == -1:
+                                verdict_pos_end = row[step].find('}', verdict_pos_start)
+                                
+                            verdict = row[step][verdict_pos_start:verdict_pos_end].strip()
                             row["hire_plan_verdict"] = "Yes" if verdict.lower() == 'true' else "No"
                     else:
                         row[step] = None
+                
+                # 2. Implementation Checkers (Stepwise)
+                for checker_type in ["isolated", "context"]:
+                    # Aggregate verdict defaults to Yes, flips to No if any step fails
+                    # But we only set it if we find at least one step? 
+                    # User requirement: "if any of the steps are 'No' ... is No." -> strict AND.
+                    # If data is missing, we probably leave verdict None or assume incomplete? 
+                    # We'll set it to "Yes" initially, and if any step is "No" we flip.
+                    # If we find NO data at all, we might want to leave it None?
+                    # Let's track if we found any data.
+                    
+                    all_correct = True
+                    found_any = False
+                    
+                    base_prompt_type = f"hire_implementation_checker_{checker_type}_N_{N}"
+                    
+                    for i in range(1, N + 1):
+                        step_prompt_type = f"{base_prompt_type}_step_{i}"
+                        col_name = f"{base_prompt_type}_step_{i}"
+                        
+                        cache_path = os.path.join(cache_dir, dataset, code_gen_model, eval_model, step_prompt_type, f"{task_id}.json")
+                        
+                        if os.path.exists(cache_path):
+                            found_any = True
+                            with open(cache_path, 'r', encoding='utf-8') as f:
+                                cached = json.load(f)
+                            
+                            content = cached.get('content', '')
+                            row[col_name] = content
+                            
+                            # Parse verdict for this step
+                            # Looking for "correct": boolean
+                            try:
+                                v_start = content.find('"correct": ')
+                                if v_start != -1:
+                                    v_start += len('"correct": ')
+                                    v_end = content.find(',', v_start)
+                                    if v_end == -1:
+                                        v_end = content.find('}', v_start)
+                                    
+                                    step_verdict_str = content[v_start:v_end].strip().lower()
+                                    is_step_correct = (step_verdict_str == 'true')
+                                    
+                                    if not is_step_correct:
+                                        all_correct = False
+                                else:
+                                    # Could not find key, treat as unknown/fail? Or just ignore?
+                                    # Safe to assume fail if unstructured? Or keep all_correct as is?
+                                    # Fallback to simple "Yes"/"No" substring if json parse fails?
+                                    pass
+                            except:
+                                pass
+                        else:
+                            row[col_name] = None
+                            
+                    # Set aggregate verdict
+                    verdict_col = f"hire_implementation_checker_{checker_type}_verdict"
+                    if found_any:
+                        row[verdict_col] = "Yes" if all_correct else "No"
+                    else:
+                        row[verdict_col] = None
+                
+                # 3. Composite Verdicts (Plan + Implementation)
+                plan_verdict = row.get("hire_plan_verdict")
+                
+                # Isolated Composite
+                iso_verdict = row.get("hire_implementation_checker_isolated_verdict")
+                if plan_verdict is None or iso_verdict is None:
+                     row["hire_plan_imp_isolated_verdict"] = None
+                else:
+                     # "Yes" only if both are "Yes"
+                     row["hire_plan_imp_isolated_verdict"] = "Yes" if (plan_verdict == "Yes" and iso_verdict == "Yes") else "No"
+                
+                # Context Composite
+                ctx_verdict = row.get("hire_implementation_checker_context_verdict")
+                if plan_verdict is None or ctx_verdict is None:
+                     row["hire_plan_imp_context_verdict"] = None
+                else:
+                     row["hire_plan_imp_context_verdict"] = "Yes" if (plan_verdict == "Yes" and ctx_verdict == "Yes") else "No"
             
             else:
                 pass
