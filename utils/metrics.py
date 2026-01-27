@@ -341,6 +341,36 @@ def create_results_dataframe(dataset: str, code_gen_model: str, eval_model: str 
                 else:
                      row["hire_plan_imp_context_verdict"] = "Yes" if (plan_verdict == "Yes" and ctx_verdict == "Yes") else "No"
             
+            elif evaluation_method.startswith("ice_"):
+                # ICE Evaluation (ice_correctness, ice_usefulness)
+                cache_path = os.path.join(cache_dir, dataset, code_gen_model, eval_model, evaluation_method, f"{sanitized_task_id}.json")
+                
+                if os.path.exists(cache_path):
+                    with open(cache_path, 'r', encoding='utf-8') as f:
+                        cached = json.load(f)
+                        content = cached.get('content', '')
+                        row[evaluation_method] = content
+                        
+                        # Parse score
+                        score = parse_score(content)
+                        row[f"{evaluation_method}_score"] = score
+                        
+                        # Apply Verdict Logic
+                        if evaluation_method == "ice_correctness":
+                            # "any value less than 4 is a false"
+                            # parse_score returns float. 4.0 is max.
+                            # So >= 4.0 is Yes? Prompt says 0-4.
+                            row[f"{evaluation_method}_verdict"] = "Yes" if score >= 4.0 else "No"
+                        elif evaluation_method == "ice_usefulness":
+                             # No specific verdict logic requested, but maybe useful to have binary?
+                             # For now just score is enough unless requested.
+                             pass
+                else:
+                    row[evaluation_method] = None
+                    row[f"{evaluation_method}_score"] = None
+                    if evaluation_method == "ice_correctness":
+                         row[f"{evaluation_method}_verdict"] = None
+
             else:
                 pass
         
