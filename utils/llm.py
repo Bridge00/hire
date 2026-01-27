@@ -156,3 +156,52 @@ def clean_code(code):
         return code.split("```")[-2].strip()
         
     return code.strip()
+
+import io
+import tokenize
+
+def strip_comments_preserve_docstrings(code: str, lang: str = 'py') -> str:
+    """
+    Remove all single-line comments from code, preserving docstrings (block comments) and strings.
+    
+    Args:
+        code: The source code string.
+        lang: 'py', 'cpp', 'java', 'js', 'go'.
+    """
+    if lang == 'py':
+        out = []
+        try:
+            tokens = tokenize.generate_tokens(io.StringIO(code).readline)
+            for tok in tokens:
+                tok_type, tok_str, start, end, line = tok
+                # Skip actual comment tokens (single line in Python starts with #)
+                if tok_type == tokenize.COMMENT:
+                    continue
+                out.append(tok)
+            return tokenize.untokenize(out)
+        except tokenize.TokenError:
+            # Fallback if tokenization fails (e.g. partial code)
+            return code
+    
+    elif lang in ['cpp', 'java', 'js', 'go']:
+        # Regex to match:
+        # 1. Strings (Double, Single, Backtick) -> Keep
+        # 2. Block Comments (/* ... */) -> Keep (treated as docstrings)
+        # 3. Single Line Comments (// ...) -> Remove
+        
+        # Note: Go uses backticks for raw strings. JS uses backticks for templates.
+        # strings: "...", '...', `...`
+        # We need to be careful with escaping in strings.
+        
+        pattern = r'("(?:\\.|[^\\"])*"|\'(?:\\.|[^\\\'])*\'|`[^`]*`|/\*[\s\S]*?\*/)|(//.*)'
+        
+        def replacer(match):
+            # If group 1 matches (string or block comment), keep it.
+            if match.group(1):
+                return match.group(1)
+            # If group 2 matches (single line comment), remove it (return empty).
+            return ""
+            
+        return re.sub(pattern, replacer, code)
+        
+    return code
