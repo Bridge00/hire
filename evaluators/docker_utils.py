@@ -8,7 +8,7 @@ class DockerRunner:
     def __init__(self, image_name="hire-evaluator"):
         self.image_name = image_name
 
-    def run(self, files, command, timeout=15):
+    def run(self, files, command, timeout=5):
         """
         Runs a command in a Docker container with the specified files.
         :param files: A dictionary mapping filenames to their content.

@@ -2,8 +2,7 @@ import argparse
 import sys
 import os
 from src.pipeline import PipelineRunner
-from src.generator import CodeGenerator
-from src.evaluator import Evaluator
+from src.pipeline import PipelineRunner
 from data.all_code_benchmarks import CodeData
 from evaluators.py_eval import PythonEvaluator
 from evaluators import get_evaluator
@@ -26,6 +25,13 @@ def main():
     parser.add_argument("--force", action="store_true", help="Force re-generation of LLM responses (bypass cache)")
     parser.add_argument("--parallel", action="store_true", help="Run benchmarks in parallel")
     parser.add_argument("--num_workers", type=int, default=4, help="Number of workers for parallel execution")
+    
+    # Refinement arguments
+    parser.add_argument("--refine_results", action="store_true", help="Run refined code from cache")
+    parser.add_argument("--refine_model", type=str, help="Model used for refinement")
+    parser.add_argument("--eval_prompt", type=str, help="Evaluation prompt used for refinement")
+    parser.add_argument("--n", type=int, default=3, help="N parameter for HIRE prompts")
+    parser.add_argument("--k", type=int, default=1, help="K parameter for vanilla prompts")
    
     args = parser.parse_args()
     
@@ -36,24 +42,51 @@ def main():
     print(f"Code Gen Model: {args.code_gen_model}")
     print(f"Eval Model: {args.eval_model}")
     print(f"No Eval Mode: {args.no_eval}")
+    if args.refine_results:
+        print(f"Refine Mode: Active")
+        print(f"Refine Model: {args.refine_model}")
+        print(f"Refine Eval Source: {args.eval_source}")
+        print(f"Refine Eval Prompt: {args.eval_prompt}")
     print(f"---------------------")
+    if args.refine_results:
+        if not all([args.eval_source, args.eval_prompt, args.eval_model]):
+             print("Error: --refine_results requires --eval_source, --eval_prompt, and --eval_model.")
+             sys.exit(1)
+        
+        # Construct specialized code_gen_model name for cache resolution
+        refine_model = args.refine_model or args.code_gen_model or "gpt-4o-mini"
+        k_suffix = f"_k{args.k}" if (args.eval_prompt == "vanilla" and args.k > 1) else ""
+        n_suffix = f"_N_{args.n}" if (args.eval_prompt and args.eval_prompt.startswith("hire_") and args.eval_prompt not in ["hire_explainer", "hire_explainer_query_aware", "hire_explainer_checker", "hire_explainer_checker_query_aware"]) else ""
+        specialized_gen_model = f"{refine_model}_refine_{args.eval_source}_{args.eval_prompt}{n_suffix}{k_suffix}_{args.eval_model}"
+        print(f"Constructed specialized model name for cache: {specialized_gen_model}")
+        args.code_gen_model = specialized_gen_model
 
     py_evaluator = get_evaluator(args.dataset)
     try:
-        
         # 1. Load Dataset
         dataset = CodeData(args.dataset)
         print(len(dataset))
         if args.end_problem is None:
             args.end_problem = len(dataset)
         code_dataset_subset = [data for i, data in enumerate(dataset) if args.start_problem <= i < args.end_problem]
+
         # 2. Setup Components
         print(len(code_dataset_subset))
-        generator = CodeGenerator(args.code_gen_model, dataset=args.dataset)
-        evaluator = None if args.evaluation_method is None else Evaluator(args.eval_model, dataset=args.dataset, code_gen_model=args.code_gen_model)
         
         # 3. Initialize Pipeline
-        runner = PipelineRunner(generator, evaluator, no_eval=args.no_eval, execute_solution=args.execute_solution, dataset_name=args.dataset, force=args.force, eval_source=args.eval_source)
+        # If refine_results is set, we use the specialized model name (which hits refinement cache).
+        # We pass eval_source=None to the runner so it doesn't try to pull raw code from dataset.
+        runner_eval_source = args.eval_source if not args.refine_results else None
+        
+        runner = PipelineRunner(
+            code_gen_model=args.code_gen_model, 
+            eval_model=args.eval_model, 
+            eval_prompt_type=args.evaluation_method, 
+            no_eval=args.no_eval, 
+            execute_solution=args.execute_solution, 
+            dataset_name=args.dataset, 
+            eval_source=runner_eval_source
+        )
        
         # 4. Run
         results = runner.run_experiment(code_dataset_subset, py_evaluator, parallel=args.parallel, num_workers=args.num_workers)
@@ -65,7 +98,8 @@ def main():
         
         def get_git_commit():
             try:
-                return subprocess.check_output(["git", "rev-parse", "HEAD"]).decode("utf-8").strip()
+                # Use a more cross-platform way to get git commit or return unknown
+                return subprocess.check_output(["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL).decode("utf-8").strip()
             except Exception:
                 return "unknown"
 
@@ -77,12 +111,13 @@ def main():
         }
         
         # Create logs directory
-
         log_dir = "execution_logs"
         # Naming convention for execution logs
         range_suffix = f"_{args.start_problem}_{args.end_problem}"
         
-        if args.eval_source:
+        if args.refine_results:
+             filename = f"{log_dir}/{args.dataset}_{args.code_gen_model}_exec{range_suffix}.json"
+        elif args.eval_source:
              filename = f"{log_dir}/{args.dataset}_{args.eval_source}_exec{range_suffix}.json"
         elif args.execute_solution:
             filename = f"{log_dir}/{args.dataset}_solutions_exec{range_suffix}.json"

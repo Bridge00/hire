@@ -150,6 +150,30 @@ def parse_filename_metadata(results_file: str):
     # We use these to robustly split the filename.
     # Order matters: more specific (longer) prompts first to avoid partial matches
     KNOWN_PROMPTS = [
+        "hire_aggregator_a2_aware_query_aware_flexible",
+        "hire_aggregator_a2_aware_flexible",
+        "hire_aggregator_query_aware_flexible",
+        "hire_aggregator_flexible",
+        "hire_explainer_checker_query_aware",
+        "hire_explainer_checker",
+        "hire_explainer_query_aware",
+        "hire_explainer",
+        "hire_commentor_checker_query_aware_flexible",
+        "hire_commentor_checker_flexible",
+        "hire_plan_checker_query_aware_text_only_flexible",
+        "hire_plan_checker_text_only_flexible",
+        "hire_implementation_checker_context_query_aware_flexible",
+        "hire_implementation_checker_isolated_query_aware_flexible",
+        "hire_plan_checker_query_aware_flexible",
+        "hire_implementation_checker_context_flexible",
+        "hire_implementation_checker_isolated_flexible",
+        "hire_plan_checker_flexible",
+        "hire_decomposer_query_aware_flexible",
+        "hire_decomposer_flexible",
+        "hire_implementation_checker_context_query_aware",
+        "hire_implementation_checker_isolated_query_aware",
+        "hire_plan_checker_query_aware",
+        "hire_decomposer_query_aware",
         "hire_implementation_checker_context", 
         "hire_implementation_checker_isolated",
         "hire_plan_checker",
@@ -157,6 +181,8 @@ def parse_filename_metadata(results_file: str):
         "cj_fault_localization",
         "cj_analysis",
         "cj_summary",
+        "ice_correctness",
+        "ice_usefulness",
         "vanilla"
     ]
     
@@ -290,16 +316,91 @@ def parse_filename_metadata(results_file: str):
              if dataset and code_gen_model:
                 return dataset, code_gen_model, eval_model, eval_prompt_type
 
+    # Pattern 3: Refinement
+    # dataset_SOURCE_PROMPT_eval_EVALMODEL_REFINEMODEL_refine_START_END_results.jsonl
+    refine_pattern = r'(.+?)_eval_(.+?)_(.+?)_refine_\d+_\d+_results\.jsonl'
+    r_match = re.match(refine_pattern, basename)
+    if r_match:
+        prefix = r_match.group(1)
+        eval_model = r_match.group(2)
+        refine_model_name = r_match.group(3)
+        
+        # We need to split prefix into dataset, eval_source, and eval_prompt
+        eval_prompt_type = None
+        ds_source = None
+        
+        for prompt in KNOWN_PROMPTS:
+            # Check for k-variant: _{prompt}_k\d+$
+            if re.search(fr"_{prompt}_k\d+$", prefix):
+                m = re.search(fr"_{prompt}_k\d+$", prefix)
+                eval_prompt_type = prefix[m.start()+1:]
+                ds_source = prefix[:m.start()]
+                break
+            # Check for N-variant: _{prompt}_N_\d+$
+            if re.search(fr"_{prompt}_N_\d+$", prefix):
+                m = re.search(fr"_{prompt}_N_\d+$", prefix)
+                eval_prompt_type = prefix[m.start()+1:]
+                ds_source = prefix[:m.start()]
+                break
+            # Check for standard: _{prompt}$
+            if prefix.endswith(f"_{prompt}"):
+                eval_prompt_type = prompt
+                ds_source = prefix[:-len(prompt)-1]
+                break
+        
+        if eval_prompt_type and ds_source:
+            # Split ds_source into dataset and source
+            dataset = None
+            code_gen_model = None
+            
+            for known_ds in KNOWN_DATASETS_UNDERSCORE:
+                if ds_source.startswith(known_ds + "_"):
+                    dataset = known_ds
+                    code_gen_model = ds_source[len(known_ds)+1:]
+                    break
+            
+            if not dataset and '_' in ds_source:
+                dataset_split = ds_source.split('_', 1)
+                dataset = dataset_split[0]
+                code_gen_model = dataset_split[1]
+            
+            if dataset and code_gen_model:
+                # Construct special code_gen_model name for the cache path
+                specialized_gen_model = f"{refine_model_name}_refine_{code_gen_model}_{eval_prompt_type}_{eval_model}"
+                return dataset, specialized_gen_model, None, None
+
     # Fallback to generic code generation pattern if no eval pattern matched
-    code_pattern = r'(.+?)_(.+?)_\d+_\d+_results\.jsonl'
+    code_pattern = r'(.+?)_\d+_\d+_results\.jsonl'
     match = re.match(code_pattern, basename)
     
     if match:
-        dataset = match.group(1)
-        code_gen_model = match.group(2)
-        return dataset, code_gen_model, None, None
+        prefix = match.group(1) # dataset_model
+        
+        # Split prefix into dataset and source
+        dataset = None
+        code_gen_model = None
+        
+        for known_ds in KNOWN_DATASETS_UNDERSCORE:
+            if prefix.startswith(known_ds + "_"):
+                dataset = known_ds
+                code_gen_model = prefix[len(known_ds)+1:]
+                break
+        
+        if not dataset and '_' in prefix:
+            dataset_split = prefix.split('_', 1)
+            dataset = dataset_split[0]
+            code_gen_model = dataset_split[1]
+        
+        if dataset and code_gen_model:
+            if code_gen_model.startswith("code_model_"):
+                code_gen_model = code_gen_model[len("code_model_"):]
+            return dataset, code_gen_model, None, None
     
-    return None, None, None, None
+    # Strip prefix from all result variants before returning
+    if code_gen_model and code_gen_model.startswith("code_model_"):
+         code_gen_model = code_gen_model[len("code_model_"):]
+
+    return dataset, code_gen_model, eval_model, eval_prompt_type
 
 def main():
     parser = argparse.ArgumentParser(description="Process OpenAI Batch API results and populate structured cache.")

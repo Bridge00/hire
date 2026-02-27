@@ -15,6 +15,63 @@ load_dotenv()
 # From TextGrad
 EVAL_SYS = "You are a smart language model that evaluates code snippets. You do not solve problems or propose new code snippets, only evaluate existing solutions critically and give very concise critiques."
 
+def augment_code_with_comments(original_code, steps):
+    """
+    Injects comments into original_code based on steps decomposition.
+    Uses cursor-based matching to handle partial/fuzzy segments.
+    """
+    augmented = ""
+    cursor = 0
+    
+    for step in steps:
+        expl = step.get("explanation", "").replace("\n", " ")
+        seg = step.get("code_segment", "")
+        if not seg: continue
+        
+        # 1. Try exact match
+        idx = original_code.find(seg, cursor)
+        match_len = len(seg)
+        
+        # 2. Try first-line match (if exact failed)
+        if idx == -1:
+            lines = seg.strip().split('\n')
+            if lines:
+                first_line = lines[0].strip()
+                # Simple find for the first line content
+                # Note: this finds the first occurrence of the str stripped. 
+                # Ideally we want to match it with correct indentation, but text-search is safer relative to cursor.
+                candidate = original_code.find(first_line, cursor)
+                if candidate != -1:
+                    idx = candidate
+                    match_len = len(first_line)
+        
+        if idx != -1:
+            # Found match.
+            # Append Gap (Unmatched Code between cursor and match)
+            augmented += original_code[cursor:idx]
+            
+            # Insert Comment
+            # Ensure newline before comment if not at start?
+            if augmented and not augmented.endswith('\n'):
+                 augmented += "\n"
+            augmented += f"# SUMMARIZER AGENT : {expl}\n"
+            
+            # Append Matched Part
+            augmented += original_code[idx : idx + match_len]
+            
+            # Advance Cursor
+            cursor = idx + match_len
+        else:
+            # No match found. Insert comment at current cursor?
+            # This ensures we don't lose the explanation, even if code alignment failed.
+            if augmented and not augmented.endswith('\n'):
+                 augmented += "\n"
+            augmented += f"# SUMMARIZER AGENT : {expl} (Location Approx)\n"
+            
+    # Append remaining code
+    augmented += original_code[cursor:]
+    return augmented
+
 def generate_code_batch(args, dataset, cache_dir):
     """Generate batch requests for code generation."""
     start = args.start_problem
@@ -99,7 +156,7 @@ def generate_eval_batch(args, dataset, cache_dir, k_index=None, temperature=None
              return None
 
     eval_prompt_type = args.eval_prompt
-    if args.eval_prompt in ["hire_decomposer", "hire_plan_checker", "hire_implementation_checker_isolated", "hire_implementation_checker_context"]:
+    if args.eval_prompt.startswith("hire_") and args.eval_prompt not in ["hire_explainer", "hire_explainer_query_aware", "hire_explainer_checker", "hire_explainer_checker_query_aware"]:
         eval_prompt_type = f"{args.eval_prompt}_N_{args.n}"
         
     if k_index is not None:
@@ -155,96 +212,243 @@ def generate_eval_batch(args, dataset, cache_dir, k_index=None, temperature=None
                 if args.eval_prompt == "vanilla":
                     eval_user_prompt = up.VANILLA_EVAL_BINARY.format(PROBLEM=problem_prompt, CODE=cleaned_code)
                     active_eval_prompt_type = "vanilla"
-                elif args.eval_prompt == "hire_decomposer":
-                    eval_user_prompt = up.HIRE_DECOMPOSER.format(N=args.n, CODE=cleaned_code)
-                    active_eval_prompt_type = f"hire_decomposer_N_{args.n}"
-                elif args.eval_prompt == "hire_plan_checker":
-                    decomposed_plan_folder = f"hire_decomposer_N_{args.n}"
-                    decomposed_plan_path = os.path.join(cache_dir, args.dataset, model_or_source, args.eval_model, decomposed_plan_folder, f"{task_id}.json")
-                    
-                    if not os.path.exists(decomposed_plan_path):
-                        missing_plan_count += 1
-                        continue
-                    
-                    with open(decomposed_plan_path, 'r', encoding='utf-8') as f:
-                        plan_data = json.load(f)
-                        plan = plan_data.get("content", "")
-                    
-                    eval_user_prompt = up.HIRE_PLAN_CHECKER.format(PROBLEM=problem_prompt, PLAN=plan)
-                    active_eval_prompt_type = f"hire_plan_checker_N_{args.n}"
 
-                elif args.eval_prompt in ["hire_implementation_checker_isolated", "hire_implementation_checker_context"]:
-                    decomposed_plan_folder = f"hire_decomposer_N_{args.n}"
-                    decomposed_plan_path = os.path.join(cache_dir, args.dataset, model_or_source, args.eval_model, decomposed_plan_folder, f"{task_id}.json")
-                    
-                    if not os.path.exists(decomposed_plan_path):
-                        missing_plan_count += 1
-                        continue
-                    
-                    with open(decomposed_plan_path, 'r', encoding='utf-8') as f:
-                        plan_data = json.load(f)
-                        plan_content = plan_data.get("content", "")
-                    
-                    try:
-                        # Find JSON block if it's wrapped in markdown
-                        json_start = plan_content.find('{')
-                        json_end = plan_content.rfind('}') + 1
-                        plan_json = json.loads(plan_content[json_start:json_end])
-                        steps = plan_json.get("steps", [])
-                    except Exception as e:
-                        print(f"Error parsing plan JSON for {task_id}: {e}")
-                        continue
-                    
-                    previous_steps_context = ""
-                    for idx, step in enumerate(steps):
-                        step_desc = step.get("explanation", "")
-                        step_code = step.get("code_segment", "")
-                        
-                        step_task_id = f"{task_id}_step_{idx}"
-                        
-                        if args.eval_prompt == "hire_implementation_checker_isolated":
-                            eval_user_prompt = up.HIRE_IMPLEMENTATION_CHECKER_ISOLATED.format(
-                                STEP_DESC=step_desc,
-                                STEP_CODE=step_code
-                            )
-                            active_eval_prompt_type = f"hire_implementation_checker_isolated_N_{args.n}"
-                        else: # context
-                            eval_user_prompt = up.HIRE_IMPLEMENTATION_CHECKER_CONTEXT.format(
-                                PROBLEM=problem_prompt,
-                                PREVIOUS_STEPS=previous_steps_context if previous_steps_context else "None",
-                                CURRENT_STEP_DESC=step_desc,
-                                CURRENT_STEP_CODE=step_code
-                            )
-                            active_eval_prompt_type = f"hire_implementation_checker_context_N_{args.n}"
-                            # Update context for next step
-                            previous_steps_context += f"Step {idx+1}: {step_desc}\nImplementation:\n{step_code}\n\n"
+                elif args.eval_prompt == "hire_explainer":
+                    eval_user_prompt = up.HIRE_EXPLAINER.format(CODE=cleaned_code)
+                    active_eval_prompt_type = "hire_explainer"
+                elif args.eval_prompt == "hire_explainer_query_aware":
+                    eval_user_prompt = up.HIRE_EXPLAINER_QUERY_AWARE.format(PROBLEM=problem_prompt, CODE=cleaned_code)
+                    active_eval_prompt_type = "hire_explainer_query_aware"
 
-                        # Check cache for this specific step
-                        step_folder = f"{active_eval_prompt_type}_step_{idx + 1}"
-                        step_cache_path = os.path.join(cache_dir, args.dataset, model_or_source, args.eval_model, step_folder, f"{task_id}.json")
-                        if not args.force and os.path.exists(step_cache_path):
-                            skipped_count += 1
+                elif args.eval_prompt in ["hire_explainer_checker", "hire_explainer_checker_query_aware"]:
+                    source_prompt = "hire_explainer" if args.eval_prompt == "hire_explainer_checker" else "hire_explainer_query_aware"
+                    
+                    # Check structured cache for the explanation
+                    explainer_path = os.path.join(cache_dir, args.dataset, model_or_source, args.eval_model, source_prompt, f"{task_id}.json")
+                    
+                    if not os.path.exists(explainer_path):
+                        missing_eval_count += 1
+                        continue
+                        
+                    with open(explainer_path, 'r', encoding='utf-8') as f:
+                        expl_data = json.load(f)
+                        explanation = expl_data.get("content", "")
+                        
+                    eval_user_prompt = up.HIRE_EXPLAINER_CHECKER.format(PROBLEM=problem_prompt, EXPLANATION=explanation)
+                    active_eval_prompt_type = args.eval_prompt
+
+                # HIRE Family Logic
+                elif args.eval_prompt.startswith("hire_"):
+                    # Determine query awareness
+                    is_query_aware_decomposer = "hire_decomposer_query_aware" in args.eval_prompt
+                    
+                    # Decomposer Prompt
+                    # Decomposer Prompt
+                    if "hire_decomposer_flexible" in args.eval_prompt:
+                         if is_query_aware_decomposer:
+                              eval_user_prompt = up.HIRE_DECOMPOSER_WITH_PROBLEM_AT_MOST_N.format(PROBLEM=problem_prompt, N=args.n, CODE=cleaned_code)
+                              active_eval_prompt_type = f"hire_decomposer_query_aware_flexible_N_{args.n}"
+                         else:
+                              eval_user_prompt = up.HIRE_DECOMPOSER_AT_MOST_N.format(N=args.n, CODE=cleaned_code)
+                              active_eval_prompt_type = f"hire_decomposer_flexible_N_{args.n}"
+
+                    elif "hire_decomposer" in args.eval_prompt:
+                         if is_query_aware_decomposer:
+                             eval_user_prompt = up.HIRE_DECOMPOSER_WITH_PROBLEM.format(PROBLEM=problem_prompt, N=args.n, CODE=cleaned_code)
+                             active_eval_prompt_type = f"hire_decomposer_query_aware_N_{args.n}"
+                         else:
+                             eval_user_prompt = up.HIRE_DECOMPOSER.format(N=args.n, CODE=cleaned_code)
+                             active_eval_prompt_type = f"hire_decomposer_N_{args.n}"
+                             
+                    # Downstream Checkers (Plan, Impl)
+                    else:
+                        # Determine source decomposer folder
+                        # Determine source decomposer folder
+                        # Check if prompt ends with _query_aware
+                        is_query_aware_pipeline = "query_aware" in args.eval_prompt
+                        is_flexible_pipeline = "flexible" in args.eval_prompt
+                        
+                        decomposer_folder_name = "hire_decomposer"
+                        if is_query_aware_pipeline:
+                            decomposer_folder_name += "_query_aware"
+                        if is_flexible_pipeline:
+                            decomposer_folder_name += "_flexible"
+                            
+                        source_decomposer_base = f"{decomposer_folder_name}_N_{args.n}"
+                        
+                        decomposed_plan_path = os.path.join(cache_dir, args.dataset, model_or_source, args.eval_model, source_decomposer_base, f"{task_id}.json")
+                        
+                        if not os.path.exists(decomposed_plan_path):
+                            missing_plan_count += 1
                             continue
-
-                        request_body = {
-                            "custom_id": step_task_id,
-                            "method": "POST",
-                            "url": "/v1/chat/completions",
-                            "body": {
-                                "model": args.eval_model,
-                                "messages": [
-                                    {"role": "system", "content": EVAL_SYS},
-                                    {"role": "user", "content": eval_user_prompt}
-                                ],
-                            }
-                        }
-                        if temperature is not None:
-                            request_body["body"]["temperature"] = temperature
                         
-                        f_out.write(json.dumps(request_body) + "\n")
-                        requests_created += 1
-                    
-                    continue # Skip the single-request logic below for this task
+                        with open(decomposed_plan_path, 'r', encoding='utf-8') as f:
+                            plan_data = json.load(f)
+                            
+                        # PLAN CHECKER
+                        if "hire_plan_checker" in args.eval_prompt:
+                             plan = plan_data.get("content", "")
+                             
+                             if "text_only" in args.eval_prompt:
+                                 try:
+                                     json_start = plan.find('{')
+                                     json_end = plan.rfind('}') + 1
+                                     plan_json = json.loads(plan[json_start:json_end])
+                                     
+                                     steps = plan_json.get("steps", [])
+                                     text_steps = []
+                                     for i, step in enumerate(steps):
+                                         # Create a simplified step object with just explanation
+                                         text_steps.append({
+                                             "step": i + 1,
+                                             "explanation": step.get("explanation", "")
+                                         })
+                                         
+                                     plan = json.dumps({"steps": text_steps}, indent=2)
+                                 except Exception as e:
+                                     print(f"Warning: Failed to strip code from plan for {task_id}: {e}")
+                                     # Convert to single string or keep original? 
+                                     # If parsing fails, we usually can't verify, so maybe keep original 
+                                     # or skip. For now, we will proceed with potentially broken plan 
+                                     # but the user should know.
+                                     pass
+
+                             eval_user_prompt = up.HIRE_PLAN_CHECKER.format(PROBLEM=problem_prompt, PLAN=plan)
+                             active_eval_prompt_type = f"{args.eval_prompt}_N_{args.n}" # e.g. hire_plan_checker_query_aware_N_3
+                        
+                        elif "hire_commentor_checker" in args.eval_prompt:
+                             plan = plan_data.get("content", "")
+                             
+                             # Construct Augmented Code from Plan
+                             try:
+                                 json_start = plan.find('{')
+                                 json_end = plan.rfind('}') + 1
+                                 plan_json = json.loads(plan[json_start:json_end])
+                                 steps = plan_json.get("steps", [])
+                                 
+                                 # Use robust reconstruction using ORIGINAL cleaned_code
+                                 augmented_code = augment_code_with_comments(cleaned_code, steps)
+                                     
+                             except Exception as e:
+                                 print(f"Error constructing augmented code for {task_id}: {e}")
+                                 continue
+
+                             eval_user_prompt = up.HIRE_COMMENTOR_CODE_CHECKER.format(PROBLEM=problem_prompt, AUGMENTED_CODE=augmented_code)
+                             active_eval_prompt_type = f"{args.eval_prompt}_N_{args.n}"
+                        
+                        # AGGREGATOR
+                        elif "hire_aggregator" in args.eval_prompt:
+                             # Determine dependencies based on current prompt flags
+                             is_query_aware = "query_aware" in args.eval_prompt
+                             # Assuming flexible, as this is the new pipeline
+                             
+                             # Dependency 1: Plan Checker (Text Only)
+                             plan_suffix = "_query_aware_text_only_flexible" if is_query_aware else "_text_only_flexible"
+                             plan_folder = f"hire_plan_checker{plan_suffix}_N_{args.n}"
+                             plan_path = os.path.join(cache_dir, args.dataset, model_or_source, args.eval_model, plan_folder, f"{task_id}.json")
+                             
+                             # Dependency 2: Commentor
+                             commentor_suffix = "_query_aware_flexible" if is_query_aware else "_flexible"
+                             commentor_folder = f"hire_commentor_checker{commentor_suffix}_N_{args.n}"
+                             commentor_path = os.path.join(cache_dir, args.dataset, model_or_source, args.eval_model, commentor_folder, f"{task_id}.json")
+                             
+                             if not os.path.exists(plan_path) or not os.path.exists(commentor_path):
+                                 # missing_dependency_count?
+                                 missing_eval_count += 1
+                                 continue
+                                 
+                             # Load and Extract Reasoning
+                             try:
+                                 with open(plan_path, 'r', encoding='utf-8') as f:
+                                     pd = json.load(f)
+                                     pc_content = json.loads(pd.get("content", "{}"))
+                                     plan_reasoning = pc_content.get("reasoning", "No reasoning provided.")
+                                 
+                                 with open(commentor_path, 'r', encoding='utf-8') as f:
+                                     cd = json.load(f)
+                                     cc_content = json.loads(cd.get("content", "{}"))
+                                     commentor_reasoning = cc_content.get("reasoning", "No reasoning provided.")
+                             except Exception as e:
+                                 print(f"Error parsing reasoning for {task_id}: {e}")
+                                 continue
+                             
+                             prompt_template = up.HIRE_AGGREGATOR_A2_AWARE if "a2_aware" in args.eval_prompt else up.HIRE_AGGREGATOR
+                             
+                             eval_user_prompt = prompt_template.format(
+                                 PROBLEM=problem_prompt,
+                                 CODE=cleaned_code,
+                                 PLAN_REASONING=plan_reasoning,
+                                 COMMENTOR_REASONING=commentor_reasoning
+                             )
+                             active_eval_prompt_type = f"{args.eval_prompt}_N_{args.n}"
+
+                        # IMPLEMENTATION CHECKERS
+                        elif "hire_implementation_checker" in args.eval_prompt:
+                             plan_content = plan_data.get("content", "")
+                             try:
+                                json_start = plan_content.find('{')
+                                json_end = plan_content.rfind('}') + 1
+                                plan_json = json.loads(plan_content[json_start:json_end])
+                                steps = plan_json.get("steps", [])
+                             except Exception as e:
+                                print(f"Error parsing plan JSON for {task_id}: {e}")
+                                continue
+                                
+                             previous_steps_context = ""
+                             active_eval_prompt_type = f"{args.eval_prompt}_N_{args.n}"
+
+                             for idx, step in enumerate(steps):
+                                step_desc = step.get("explanation", "")
+                                step_code = step.get("code_segment", "")
+                                step_task_id = f"{task_id}_step_{idx}"
+                                
+                                # isolated vs context checker logic
+                                # IMPORTANT: The prompt name might be hire_implementation_checker_isolated_query_aware
+                                # so checking "isolated" in prompt string is still valid.
+                                
+                                checker_logic = "isolated" if "isolated" in args.eval_prompt else "context"
+                                
+                                if checker_logic == "isolated":
+                                    eval_user_prompt = up.HIRE_IMPLEMENTATION_CHECKER_ISOLATED.format(
+                                        STEP_DESC=step_desc,
+                                        STEP_CODE=step_code
+                                    )
+                                else: # checker_logic == "context"
+                                    eval_user_prompt = up.HIRE_IMPLEMENTATION_CHECKER_CONTEXT.format(
+                                        PROBLEM=problem_prompt,
+                                        PREVIOUS_STEPS=previous_steps_context if previous_steps_context else "None",
+                                        CURRENT_STEP_DESC=step_desc,
+                                        CURRENT_STEP_CODE=step_code
+                                    )
+                                    # Update context
+                                    previous_steps_context += f"Step {idx+1}: {step_desc}\nImplementation:\n{step_code}\n\n"
+
+                                # Check cache for step
+                                step_folder = f"{active_eval_prompt_type}_step_{idx + 1}"
+                                step_cache_path = os.path.join(cache_dir, args.dataset, model_or_source, args.eval_model, step_folder, f"{task_id}.json")
+                                if not args.force and os.path.exists(step_cache_path):
+                                    skipped_count += 1
+                                    continue
+
+                                request_body = {
+                                    "custom_id": step_task_id,
+                                    "method": "POST",
+                                    "url": "/v1/chat/completions",
+                                    "body": {
+                                        "model": args.eval_model,
+                                        "messages": [
+                                            {"role": "system", "content": EVAL_SYS},
+                                            {"role": "user", "content": eval_user_prompt}
+                                        ],
+                                    }
+                                }
+                                if temperature is not None:
+                                    request_body["body"]["temperature"] = temperature
+                                
+                                f_out.write(json.dumps(request_body) + "\n")
+                                requests_created += 1
+                             
+                             continue # Skip single-request write below
 
                 elif args.eval_prompt == "cj_analysis":
                     eval_user_prompt = up.CODEJUDGE_ANALYSIS.format(PROBLEM=problem_prompt, CODE=cleaned_code)
@@ -340,11 +544,17 @@ def generate_refine_batch(args, dataset, cache_dir):
     start = args.start_problem
     end = min(args.end_problem, len(dataset))
     
+    assert args.eval_source, "eval_source must be provided for refinement"
+    
     refine_model = args.refine_model or args.code_gen_model
     print(f"Generating REFINEMENT batch for items {start} to {end} using model {refine_model}")
     
     os.makedirs(args.output_dir, exist_ok=True)
-    output_file = os.path.join(args.output_dir, f"{args.dataset}_{args.code_gen_model}_{args.eval_prompt}_eval_eval_{args.eval_model}_{refine_model}_refine_{start}_{end}.jsonl")
+    
+    # Filename includes eval_source and k if needed
+    k_suffix = f"_k{args.k}" if (args.eval_prompt == "vanilla" and args.k > 1) else ""
+    n_suffix = f"_N_{args.n}" if (args.eval_prompt.startswith("hire_") and args.eval_prompt not in ["hire_explainer", "hire_explainer_query_aware", "hire_explainer_checker", "hire_explainer_checker_query_aware"]) else ""
+    output_file = os.path.join(args.output_dir, f"{args.dataset}_{args.eval_source}_{args.eval_prompt}{n_suffix}{k_suffix}_eval_{args.eval_model}_{refine_model}_refine_{start}_{end}.jsonl")
     
     requests_created = 0
     skipped_count = 0
@@ -354,42 +564,89 @@ def generate_refine_batch(args, dataset, cache_dir):
     with open(output_file, 'w', encoding='utf-8') as f_out:
         for i in range(start, end):
             try:
-                task_id, problem_prompt, _, _ = dataset[i]
+                task_id, problem_prompt, _, _, row = dataset[i]
                 
-                # 1. Load initial code from cache
-                gen_cache_path = os.path.join(cache_dir, args.dataset, args.code_gen_model, f"{task_id}.json")
-                if not os.path.exists(gen_cache_path):
+                # 1. Load initial code from dataset row
+                initial_code = row.get(args.eval_source, "")
+                if not initial_code:
                     missing_code_count += 1
                     continue
                 
-                with open(gen_cache_path, 'r', encoding='utf-8') as f:
-                    gen_data = json.load(f)
-                    initial_code = gen_data.get("content", "")
-                
                 # 2. Load evaluation from cache
-                eval_prompt_type = args.eval_prompt
-                # Handle majority voting naming convention if needed, though usually refine follows a specific eval
-                eval_cache_path = os.path.join(cache_dir, args.dataset, args.code_gen_model, args.eval_model, eval_prompt_type, f"{task_id}.json")
+                evaluation_text = ""
                 
-                if not os.path.exists(eval_cache_path):
-                    missing_eval_count += 1
-                    continue
-                
-                with open(eval_cache_path, 'r', encoding='utf-8') as f:
-                    eval_data = json.load(f)
-                    evaluation = eval_data.get("content", "")
+                if args.eval_prompt == "vanilla" and args.k > 1:
+                    # Concatenate multiple vanilla evaluations
+                    reasonings = []
+                    for k_idx in range(1, args.k + 1):
+                        eval_prompt_type = f"vanilla_k{k_idx}"
+                        eval_cache_path = os.path.join(cache_dir, args.dataset, args.eval_source, args.eval_model, eval_prompt_type, f"{task_id}.json")
+                        
+                        if os.path.exists(eval_cache_path):
+                            with open(eval_cache_path, 'r', encoding='utf-8') as f:
+                                eval_data = json.load(f)
+                                content = eval_data.get("content", "")
+                                # Extract reasoning from JSON if possible
+                                if '"reasoning":' in content:
+                                    try:
+                                        r_start = content.find('"reasoning":') + len('"reasoning":')
+                                        r_end = content.rfind('}')
+                                        reasoning = content[r_start:r_end].strip().strip('"').replace('\\n', '\n').replace('\\"', '"')
+                                        reasonings.append(f"Evaluation {k_idx}: {reasoning}")
+                                    except:
+                                        reasonings.append(f"Evaluation {k_idx}: {content}")
+                                else:
+                                    reasonings.append(f"Evaluation {k_idx}: {content}")
+                    
+                    if not reasonings:
+                        missing_eval_count += 1
+                        continue
+                    evaluation_text = "\n\n".join(reasonings)
+                else:
+                    # Single evaluation
+                    eval_prompt_type = args.eval_prompt
+                    if args.eval_prompt.startswith("hire_") and args.eval_prompt not in ["hire_explainer", "hire_explainer_query_aware", "hire_explainer_checker", "hire_explainer_checker_query_aware"]:
+                        eval_prompt_type += f"_N_{args.n}"
+                        
+                    eval_cache_path = os.path.join(cache_dir, args.dataset, args.eval_source, args.eval_model, eval_prompt_type, f"{task_id}.json")
+                    
+                    if not os.path.exists(eval_cache_path):
+                        missing_eval_count += 1
+                        continue
+                    
+                    with open(eval_cache_path, 'r', encoding='utf-8') as f:
+                        eval_data = json.load(f)
+                        evaluation_text = eval_data.get("content", "")
+                    
+                    # Standardize extraction of reasoning
+                    if '"reasoning":' in evaluation_text:
+                        try:
+                            r_start = evaluation_text.find('"reasoning":') + len('"reasoning":')
+                            r_end = evaluation_text.rfind('}')
+                            evaluation_text = evaluation_text[r_start:r_end].strip().strip('"').replace('\\n', '\n').replace('\\"', '"')
+                        except:
+                            pass
 
-                if args.eval_prompt in set(["hire_plan_checker", "vanilla"]):
-                    reasoning_start = evaluation.find('\"reasoning\":')
-                    reasoning_end = evaluation.rfind('}')
-                    if reasoning_start != -1:
-                        evaluation = evaluation[reasoning_start + len('\"reasoning\":'):reasoning_end]
                 # 3. Construct Refinement Prompt
                 refine_user_prompt = up.REFINE_PROMPT.format(
                     PROBLEM=problem_prompt,
                     CODE=initial_code,
-                    EVALUATION=evaluation
+                    EVALUATION=evaluation_text
                 )
+
+                # Determine language for system prompt
+                if args.dataset in set(["leetcode", "humaneval_py"]):
+                    programming_language = "python"
+                elif args.dataset == "humaneval_js":
+                    programming_language = "javascript"
+                elif args.dataset == "humaneval_java":
+                    programming_language = "java"
+                elif args.dataset == "humaneval_cpp":
+                    programming_language = "c++"
+                elif args.dataset == "humaneval_go":
+                    programming_language = "go"
+                else:
+                    programming_language = "python" # fallback
 
                 # 4. Create Batch Request
                 request_body = {
@@ -399,7 +656,8 @@ def generate_refine_batch(args, dataset, cache_dir):
                     "body": {
                         "model": refine_model,
                         "messages": [
-                            {"role": "system", "content": up.CODEGEN_SYS},
+                            {"role": "system", "content": up.CODEGEN_SYS.format(PROGRAM_LANGUAGE=programming_language.upper(), 
+                                                            PROGRAM_LANGUAGE_LOWER=programming_language)},
                             {"role": "user", "content": refine_user_prompt}
                         ],
                     }
@@ -496,7 +754,21 @@ def main():
     
     # Evaluation-specific arguments
     parser.add_argument("--eval_model", type=str, help="Model for evaluation (required if mode=eval)", default="gpt-4o-mini")
-    parser.add_argument("--eval_prompt", type=str, choices=["vanilla", "cj_analysis", "cj_summary", "cj_fault_localization", "hire_decomposer", "hire_plan_checker", "hire_implementation_checker_isolated", "hire_implementation_checker_context", "ice_correctness", "ice_usefulness"], 
+    parser.add_argument("--eval_prompt", type=str, choices=[
+        "vanilla", "cj_analysis", "cj_summary", "cj_fault_localization", 
+        "hire_decomposer", "hire_plan_checker", "hire_implementation_checker_isolated", "hire_implementation_checker_context",
+        "hire_decomposer_query_aware", "hire_plan_checker_query_aware", "hire_implementation_checker_isolated_query_aware", "hire_implementation_checker_context_query_aware",
+        "hire_decomposer_flexible", "hire_decomposer_query_aware_flexible",
+        "hire_plan_checker_flexible", "hire_plan_checker_query_aware_flexible",
+        "hire_implementation_checker_isolated_flexible", "hire_implementation_checker_context_flexible",
+        "hire_implementation_checker_isolated_query_aware_flexible", "hire_implementation_checker_context_query_aware_flexible",
+        "hire_plan_checker_text_only_flexible", "hire_plan_checker_query_aware_text_only_flexible",
+        "hire_commentor_checker_flexible", "hire_commentor_checker_query_aware_flexible",
+        "hire_aggregator_flexible", "hire_aggregator_query_aware_flexible",
+        "hire_aggregator_a2_aware_flexible", "hire_aggregator_a2_aware_query_aware_flexible",
+        "hire_explainer", "hire_explainer_query_aware",
+        "hire_explainer_checker", "hire_explainer_checker_query_aware",
+        "ice_correctness", "ice_usefulness"], 
                         help="Evaluation prompt type (required if mode=eval)")
     parser.add_argument("--analysis_model", type=str, help="Model used for analysis (only for cj_summary, defaults to eval_model)")
     parser.add_argument("--n", type=int, default=3, help="Number of steps for hire_decomposer")
@@ -533,8 +805,11 @@ def main():
         if not args.eval_model or not args.eval_prompt:
             print("Error: --eval_model and --eval_prompt are required when mode=refine to locate evaluations in cache")
             sys.exit(1)
+        if not args.eval_source:
+            print("Error: --eval_source is REQUIRED when mode=refine")
+            sys.exit(1)
         if not args.refine_model:
-            args.refine_model = args.code_gen_model
+            args.refine_model = args.code_gen_model or "gpt-4o-mini"
 
     # Load dataset
     print(f"Loading dataset: {args.dataset}")

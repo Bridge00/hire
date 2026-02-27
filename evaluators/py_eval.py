@@ -24,6 +24,8 @@ class PythonEvaluator:
         """
         # raise Exception("You should remove this and remove the comments, but run at your own risk!!!"
         #                 "This is going to run model-generated code on your machine.")
+        if "bigcodebench" in dataset_name.lower():
+            code = "import matplotlib\ntry:\n    matplotlib.use('Agg')\nexcept:\n    pass\n" + code
         #print(code)
         print('tests', tests)
         
@@ -60,12 +62,15 @@ class PythonEvaluator:
             # Existing leetcode/humaneval logic
             if 'humaneval' in dataset_name.lower():
                 print('in eval humaneval')
-                def_index = code.find('def')
-                paran_index = code.find('(')
-                #print(code[def_index:paran_index])
-                function_name_string = code[def_index:paran_index].split()[1]
-                #print(function_name_string)
-                tests = [test.replace('candidate', function_name_string) for test in tests if 'assert' in test]
+                import re
+                # Find the first function definition name
+                match = re.search(r'def\s+(\w+)\s*\(', code)
+                if match:
+                    function_name_string = match.group(1)
+                    tests = [test.replace('candidate', function_name_string) for test in tests if 'assert' in test]
+                else:
+                    # Fallback or if already uses candidate
+                    function_name_string = 'candidate'
                 #func_test_list = [f'from typing import *\n{code}\n\n \n\n{test}' for test in tests]
                 #print(tests)
                 #print(func_test_list)
@@ -84,15 +89,20 @@ class PythonEvaluator:
                     success_tests += [tests[i]]
                 except Exception as e:
                     failed_test = tests[i]
-                    if supervised == 'supervised':
+                    error_msg = str(e)
+                    if supervised == 'supervised' and "bigcodebench" not in dataset_name.lower():
                         try:
                             output = get_output_of_test(code, failed_test)
-                            asserted_value = tests[i].split("==")[1].strip()
-                            failed_tests += [f"{tests[i]} # ERROR: This unit test fails. Output was {output}, but expected value was: {asserted_value}"]
-                        except Exception as e:
-                            failed_tests += [f"{tests[i]} # ERROR: This unit test fails because the function generated: {e}."]
+                            # Handle cases without ==
+                            if "==" in tests[i]:
+                                asserted_value = tests[i].split("==")[1].strip()
+                                failed_tests += [f"{tests[i]} # ERROR: This unit test fails. Output was {output}, but expected value was: {asserted_value}. Error: {error_msg}"]
+                            else:
+                                failed_tests += [f"{tests[i]} # ERROR: This unit test fails. Output was {output}. Error: {error_msg}"]
+                        except Exception as e2:
+                            failed_tests += [f"{tests[i]} # ERROR: This unit test fails. Original error: {error_msg}"]
                     else:
-                        failed_tests += [f"{tests[i]} # ERROR: This unit test fails."]
+                        failed_tests += [f"{tests[i]} # ERROR: This unit test fails. Error: {error_msg}"]
 
 
             state = []

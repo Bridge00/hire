@@ -12,13 +12,13 @@ class PipelineRunner:
         3. Collect results
     """
     
-    def __init__(self, generator: CodeGenerator, evaluator: Evaluator, no_eval : bool, execute_solution: bool, dataset_name: str, force: bool = False, eval_source: str = None):
-        self.generator = generator
-        self.evaluator = evaluator
+    def __init__(self, code_gen_model: str, eval_model: str, eval_prompt_type: str, no_eval: bool, execute_solution: bool, dataset_name: str, eval_source: str = None):
+        self.code_gen_model = code_gen_model
+        self.eval_model = eval_model
+        self.eval_prompt_type = eval_prompt_type
         self.no_eval = no_eval
         self.execute_solution = execute_solution
         self.dataset_name = dataset_name
-        self.force = force
         self.eval_source = eval_source
 
     def _process_task(self, i, item, py_evaluator, total_tasks):
@@ -41,8 +41,11 @@ class PipelineRunner:
                  return None
              code = prompt + full_item[self.eval_source]
         elif not self.execute_solution:
-            # 1. Generate
-            code = self.generator.generate(prompt, task_id=task_id, force=self.force)
+            # Load from cache
+            code = ul.get_cached_content(self.dataset_name, task_id, self.code_gen_model)
+            if code is None:
+                print(f"Warning: No cached code found for task {task_id} (model: {self.code_gen_model}). Skipping.")
+                return None
             code = ul.clean_code(code)  
         else:
             code = prompt + canonical_solution
@@ -61,8 +64,13 @@ class PipelineRunner:
                 "pass_rate": sum(state) / len(state) if state else 0.0
             }
             
-            if self.evaluator is not None and not self.no_eval:
-                self.evaluator.evaluate(prompt, code)
+            # Check for existing evaluation in cache if needed
+            if not self.no_eval and self.eval_model and self.eval_prompt_type:
+                eval_content = ul.get_cached_content(self.dataset_name, task_id, self.code_gen_model, self.eval_model, self.eval_prompt_type)
+                if eval_content:
+                    result["llm_evaluation"] = eval_content
+                else:
+                    print(f"Warning: No cached evaluation found for task {task_id}")
             
             return result
         return None

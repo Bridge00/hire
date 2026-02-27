@@ -29,6 +29,12 @@ def main():
         print("-" * 40)
         print(f"Tasks Improved:     {metrics['tasks_improved']}")
         print(f"Tasks Regressed:    {metrics['tasks_regressed']}")
+        print("-" * 40)
+        print(f"Total Orig Tokens:  {metrics['total_original_tokens']}")
+        print(f"Total Ref Tokens:   {metrics['total_refined_tokens']}")
+        print(f"Avg Orig Tokens:    {metrics['avg_original_tokens']:.2f}")
+        print(f"Avg Ref Tokens:     {metrics['avg_refined_tokens']:.2f}")
+        print(f"Token Reduction:    {metrics['token_reduction_rate']:.2f}%")
         print("="*40 + "\n")
         
     except Exception as e:

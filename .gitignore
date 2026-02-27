@@ -14,3 +14,4 @@ data/APPS.tar.gz
 /test_cache
 /tests
 /batch_jobs_perturb
+/batch_jobs_refine

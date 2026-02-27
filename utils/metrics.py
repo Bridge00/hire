@@ -6,8 +6,17 @@ import pandas as pd
 import json
 import os
 from data.all_code_benchmarks import CodeData
-from utils.llm import _get_cache_key
+from utils.llm import _get_cache_key, _sanitize_filename
 from utils.prompts import CODEJUDGE_ANALYSIS, CODEJUDGE_SUMMARY, VANILLA_EVAL_BINARY
+import tiktoken
+
+def count_tokens(text: str, model: str = "gpt-4o-mini") -> int:
+    """Counts the number of tokens in a text using tiktoken."""
+    try:
+        encoding = tiktoken.encoding_for_model(model)
+    except KeyError:
+        encoding = tiktoken.get_encoding("o200k_base") # Fallback for unknown models (o200k is used by gpt-4o family)
+    return len(encoding.encode(text or ""))
 
 def rank_metrics(scores_a, scores_b) -> Dict[str, float]:
     kt = kendalltau(scores_a, scores_b, nan_policy="omit")
@@ -163,6 +172,7 @@ def create_results_dataframe(dataset: str, code_gen_model: str, eval_model: str 
     
     for result in exec_data_results:
         task_id = result['task_id']
+        sanitized_task_id = _sanitize_filename(task_id)
         prompt = result['prompt']
         generated_code = result['generated_code']
         state = tuple(result.get('state', []))
@@ -238,19 +248,103 @@ def create_results_dataframe(dataset: str, code_gen_model: str, eval_model: str 
                         row[step] = None
                 
 
-            elif evaluation_method == 'hire':
-                # Get Hire Decomposer analysis
-                # Path: dataset/code_gen_model/eval_model/hire_decomposer/task_id.json
+            elif "explainer" in evaluation_method:
+                # hire_explainer, hire_explainer_query_aware, hire_explainer_checker, hire_explainer_checker_query_aware
+                # These prompts do NOT use the _N_ suffix in the structured cache
+                cache_path = os.path.join(cache_dir, dataset, code_gen_model, eval_model, evaluation_method, f"{sanitized_task_id}.json")
+                
+                if os.path.exists(cache_path):
+                    with open(cache_path, 'r', encoding='utf-8') as f:
+                        cached = json.load(f)
+                        content = cached.get('content', '')
+                        row[evaluation_method] = content
+                        
+                        if "checker" in evaluation_method:
+                            # Parse verdict using standard HIRE JSON parsing
+                            try:
+                                v_start = content.find('"correct": ')
+                                if v_start != -1:
+                                    v_start += len('"correct": ')
+                                    v_end = content.find(',', v_start)
+                                    if v_end == -1:
+                                        v_end = content.find('}', v_start)
+                                    
+                                    val_str = content[v_start:v_end].strip().lower()
+                                    verdict = "Yes" if val_str == "true" else "No"
+                                    
+                                    # Column naming as requested by user
+                                    if evaluation_method == "hire_explainer_checker":
+                                        row["hire_explainer_verdict"] = verdict
+                                    elif evaluation_method == "hire_explainer_checker_query_aware":
+                                        row["hire_explainer_query_aware_verdict"] = verdict
+                            except:
+                                pass
+                else:
+                    row[evaluation_method] = None
+                    if "checker" in evaluation_method:
+                        if evaluation_method == "hire_explainer_checker":
+                            row["hire_explainer_verdict"] = None
+                        elif evaluation_method == "hire_explainer_checker_query_aware":
+                            row["hire_explainer_query_aware_verdict"] = None
+
+            elif evaluation_method.startswith('hire'):
+                # HIRE Family (hire or hire_query_aware or hire_flexible)
+                is_query_aware = "query_aware" in evaluation_method
+                is_flexible = "flexible" in evaluation_method or "_at_most" in evaluation_method
+                is_text_only = "text_only" in evaluation_method
+                is_commentor = "commentor" in evaluation_method
+                is_aggregator = "aggregator" in evaluation_method
+                is_a2_aware = "a2_aware" in evaluation_method
+                
+                if is_aggregator:
+                    is_text_only = True
+                    is_commentor = True
+                
+                # Base suffix for decomposer and implementation checkers
+                base_suffix = ""
+                if is_query_aware:
+                    base_suffix += "_query_aware"
+                if is_flexible:
+                    base_suffix += "_flexible"
+                
+                # Suffix for plan checker (includes text_only)
+                plan_suffix = ""
+                if is_query_aware:
+                    plan_suffix += "_query_aware"
+                if is_text_only:
+                    plan_suffix += "_text_only"
+                if is_flexible:
+                    plan_suffix += "_flexible"
+                
                 # 1. Decomposer and Plan Checker
-                for step in [f'hire_decomposer_N_{N}', f'hire_plan_checker_N_{N}']:
-                    cache_path = os.path.join(cache_dir, dataset, code_gen_model, eval_model, step, f"{task_id}.json")
+                decomposer_step = f'hire_decomposer{base_suffix}_N_{N}'
+                plan_step = f'hire_plan_checker{plan_suffix}_N_{N}'
+                
+                steps_to_load = [decomposer_step, plan_step]
+                
+                commentor_step = ""
+                if is_commentor:
+                    commentor_step = f'hire_commentor_checker{base_suffix}_N_{N}'
+                    steps_to_load.append(commentor_step)
+                
+                
+                aggregator_step = ""
+                agg_prefix = "hire_aggregator"
+                if is_aggregator:
+                    if is_a2_aware:
+                        agg_prefix = "hire_aggregator_a2_aware"
+                    aggregator_step = f'{agg_prefix}{base_suffix}_N_{N}'
+                    steps_to_load.append(aggregator_step)
+
+                for step in steps_to_load:
+                    cache_path = os.path.join(cache_dir, dataset, code_gen_model, eval_model, step, f"{sanitized_task_id}.json")
                     
                     if os.path.exists(cache_path):
                         with open(cache_path, 'r', encoding='utf-8') as f:
                             cached = json.load(f)
                         row[step] = cached.get('content', '')
 
-                        if step == f'hire_plan_checker_N_{N}':
+                        if step == plan_step:
                             verdict_pos_start = row[step].find('"correct": ') + len('"correct": ')
                             verdict_pos_end = row[step].find(',', verdict_pos_start)
                             # Handle case where comma might not exist (e.g. last element), use closing brace
@@ -258,30 +352,46 @@ def create_results_dataframe(dataset: str, code_gen_model: str, eval_model: str 
                                 verdict_pos_end = row[step].find('}', verdict_pos_start)
                                 
                             verdict = row[step][verdict_pos_start:verdict_pos_end].strip()
-                            row["hire_plan_verdict"] = "Yes" if verdict.lower() == 'true' else "No"
+                            row[f"hire_plan{plan_suffix}_N_{N}_verdict"] = "Yes" if verdict.lower() == 'true' else "No"
+                        
+                        elif step == commentor_step:
+                             # Similar verdict parsing for commentor checker
+                             verdict_pos_start = row[step].find('"correct": ') + len('"correct": ')
+                             verdict_pos_end = row[step].find(',', verdict_pos_start)
+                             if verdict_pos_end == -1:
+                                 verdict_pos_end = row[step].find('}', verdict_pos_start)
+                                 
+                             verdict = row[step][verdict_pos_start:verdict_pos_end].strip()
+                             row[f"hire_commentor{base_suffix}_N_{N}_verdict"] = "Yes" if verdict.lower() == 'true' else "No"
+                        
+                        elif step == aggregator_step:
+                             # Aggregator Verdict
+                             verdict_pos_start = row[step].find('"correct": ') + len('"correct": ')
+                             verdict_pos_end = row[step].find(',', verdict_pos_start)
+                             if verdict_pos_end == -1:
+                                 verdict_pos_end = row[step].find('}', verdict_pos_start)
+                                 
+                             verdict = row[step][verdict_pos_start:verdict_pos_end].strip()
+                             row[f"{agg_prefix}{base_suffix}_N_{N}_verdict"] = "Yes" if verdict.lower() == 'true' else "No"
+
                     else:
                         row[step] = None
                 
                 # 2. Implementation Checkers (Stepwise)
                 for checker_type in ["isolated", "context"]:
-                    # Aggregate verdict defaults to Yes, flips to No if any step fails
-                    # But we only set it if we find at least one step? 
-                    # User requirement: "if any of the steps are 'No' ... is No." -> strict AND.
-                    # If data is missing, we probably leave verdict None or assume incomplete? 
-                    # We'll set it to "Yes" initially, and if any step is "No" we flip.
-                    # If we find NO data at all, we might want to leave it None?
-                    # Let's track if we found any data.
+                    # checker_type "isolated" or "context"
+                    # Folder: hire_implementation_checker_{checker_type}[_query_aware]_N_{N}_step_{i}
                     
                     all_correct = True
                     found_any = False
                     
-                    base_prompt_type = f"hire_implementation_checker_{checker_type}_N_{N}"
+                    base_prompt_type = f"hire_implementation_checker_{checker_type}{base_suffix}_N_{N}"
                     
                     for i in range(1, N + 1):
                         step_prompt_type = f"{base_prompt_type}_step_{i}"
                         col_name = f"{base_prompt_type}_step_{i}"
                         
-                        cache_path = os.path.join(cache_dir, dataset, code_gen_model, eval_model, step_prompt_type, f"{task_id}.json")
+                        cache_path = os.path.join(cache_dir, dataset, code_gen_model, eval_model, step_prompt_type, f"{sanitized_task_id}.json")
                         
                         if os.path.exists(cache_path):
                             found_any = True
@@ -292,7 +402,6 @@ def create_results_dataframe(dataset: str, code_gen_model: str, eval_model: str 
                             row[col_name] = content
                             
                             # Parse verdict for this step
-                            # Looking for "correct": boolean
                             try:
                                 v_start = content.find('"correct": ')
                                 if v_start != -1:
@@ -307,9 +416,6 @@ def create_results_dataframe(dataset: str, code_gen_model: str, eval_model: str 
                                     if not is_step_correct:
                                         all_correct = False
                                 else:
-                                    # Could not find key, treat as unknown/fail? Or just ignore?
-                                    # Safe to assume fail if unstructured? Or keep all_correct as is?
-                                    # Fallback to simple "Yes"/"No" substring if json parse fails?
                                     pass
                             except:
                                 pass
@@ -317,29 +423,33 @@ def create_results_dataframe(dataset: str, code_gen_model: str, eval_model: str 
                             row[col_name] = None
                             
                     # Set aggregate verdict
-                    verdict_col = f"hire_implementation_checker_{checker_type}_verdict"
+                    # Column name: hire_implementation_checker_{checker_type}{base_suffix}_verdict
+                    verdict_col = f"hire_implementation_checker_{checker_type}{base_suffix}_N_{N}_verdict"
                     if found_any:
                         row[verdict_col] = "Yes" if all_correct else "No"
                     else:
                         row[verdict_col] = None
                 
                 # 3. Composite Verdicts (Plan + Implementation)
-                plan_verdict = row.get("hire_plan_verdict")
+                plan_verdict = row.get(f"hire_plan{plan_suffix}_N_{N}_verdict")
                 
                 # Isolated Composite
-                iso_verdict = row.get("hire_implementation_checker_isolated_verdict")
+                iso_verdict = row.get(f"hire_implementation_checker_isolated{base_suffix}_N_{N}_verdict")
+                comp_col = f"hire_plan_imp_isolated{base_suffix}_{plan_suffix}_N_{N}_verdict"
+                
                 if plan_verdict is None or iso_verdict is None:
-                     row["hire_plan_imp_isolated_verdict"] = None
+                     row[comp_col] = None
                 else:
-                     # "Yes" only if both are "Yes"
-                     row["hire_plan_imp_isolated_verdict"] = "Yes" if (plan_verdict == "Yes" and iso_verdict == "Yes") else "No"
+                     row[comp_col] = "Yes" if (plan_verdict == "Yes" and iso_verdict == "Yes") else "No"
                 
                 # Context Composite
-                ctx_verdict = row.get("hire_implementation_checker_context_verdict")
+                ctx_verdict = row.get(f"hire_implementation_checker_context{base_suffix}_N_{N}_verdict")
+                comp_col_ctx = f"hire_plan_imp_context{base_suffix}_{plan_suffix}_N_{N}_verdict"
+                
                 if plan_verdict is None or ctx_verdict is None:
-                     row["hire_plan_imp_context_verdict"] = None
+                     row[comp_col_ctx] = None
                 else:
-                     row["hire_plan_imp_context_verdict"] = "Yes" if (plan_verdict == "Yes" and ctx_verdict == "Yes") else "No"
+                     row[comp_col_ctx] = "Yes" if (plan_verdict == "Yes" and ctx_verdict == "Yes") else "No"
             
             elif evaluation_method.startswith("ice_"):
                 # ICE Evaluation (ice_correctness, ice_usefulness)
@@ -352,7 +462,7 @@ def create_results_dataframe(dataset: str, code_gen_model: str, eval_model: str 
                         row[evaluation_method] = content
                         
                         # Parse score
-                        score = parse_score(content)
+                        score = content[0]#parse_score(content)
                         row[f"{evaluation_method}_score"] = score
                         
                         # Apply Verdict Logic
@@ -360,7 +470,7 @@ def create_results_dataframe(dataset: str, code_gen_model: str, eval_model: str 
                             # "any value less than 4 is a false"
                             # parse_score returns float. 4.0 is max.
                             # So >= 4.0 is Yes? Prompt says 0-4.
-                            row[f"{evaluation_method}_verdict"] = "Yes" if score >= 4.0 else "No"
+                            row[f"{evaluation_method}_verdict"] = "Yes" if score == "4" else "No"
                         elif evaluation_method == "ice_usefulness":
                              # No specific verdict logic requested, but maybe useful to have binary?
                              # For now just score is enough unless requested.
@@ -412,16 +522,30 @@ def calculate_refinement_transition_metrics(original_log_path: str, refined_log_
         "total_ref_tests": 0,
         "tasks_improved": 0,
         "tasks_regressed": 0,
-        "tasks_matched": 0
+        "tasks_matched": 0,
+        "total_original_tokens": 0,
+        "total_refined_tokens": 0,
+        "avg_original_tokens": 0.0,
+        "avg_refined_tokens": 0.0,
+        "token_reduction_rate": 0.0
     }
     
-    for task_id, orig_state in orig_results.items():
-        if task_id not in ref_results:
+    orig_results_with_code = {res['task_id']: (res.get('state', []), res.get('generated_code', '')) for res in original_data.get('results', [])}
+    ref_results_with_code = {res['task_id']: (res.get('state', []), res.get('generated_code', '')) for res in refined_data.get('results', [])}
+
+    for task_id, (orig_state, orig_code) in orig_results_with_code.items():
+        if task_id not in ref_results_with_code:
             continue
             
-        ref_state = ref_results[task_id]
+        ref_state, ref_code = ref_results_with_code[task_id]
         metrics["tasks_matched"] += 1
         
+        # Track Tokens
+        orig_tokens = count_tokens(orig_code)
+        ref_tokens = count_tokens(ref_code)
+        metrics["total_original_tokens"] += orig_tokens
+        metrics["total_refined_tokens"] += ref_tokens
+
         task_f2p = 0
         task_p2f = 0
         
@@ -446,5 +570,13 @@ def calculate_refinement_transition_metrics(original_log_path: str, refined_log_
             metrics["tasks_improved"] += 1
         elif task_p2f > task_f2p:
             metrics["tasks_regressed"] += 1
+
+    # Calculate averages and reduction rate
+    if metrics["tasks_matched"] > 0:
+        metrics["avg_original_tokens"] = metrics["total_original_tokens"] / metrics["tasks_matched"]
+        metrics["avg_refined_tokens"] = metrics["total_refined_tokens"] / metrics["tasks_matched"]
+        
+        if metrics["total_original_tokens"] > 0:
+            metrics["token_reduction_rate"] = ((metrics["total_original_tokens"] - metrics["total_refined_tokens"]) / metrics["total_original_tokens"]) * 100
             
     return metrics

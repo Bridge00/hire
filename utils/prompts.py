@@ -128,6 +128,7 @@ Usefulness (scores ONLY):
 """
 
 # Prompt for HIRE Decomposer (D)
+
 HIRE_DECOMPOSER = """
 Analyze the following Python code and decompose it into exactly {N} high-level steps.
 Return the result as a valid JSON object with a single key "steps", which is a list of objects.
@@ -139,6 +140,81 @@ Code:
 {CODE}
 """
 
+HIRE_DECOMPOSER_WITH_PROBLEM = """
+Analyze the following Python code and decompose it into exactly {N} high-level steps, taking into account the requirements in the problem description.
+Return the result as a valid JSON object with a single key "steps", which is a list of objects.
+Each object in the "steps" list must have:
+- "code_segment": The exact code snippet for that step.
+- "explanation": A concise explanation of what that code does.
+
+Problem:
+{PROBLEM}
+
+Code:
+{CODE}
+"""
+
+HIRE_DECOMPOSER_AT_MOST_N = """
+Analyze the following Python code and decompose it into AT MOST {N} portions.
+Return the result as a valid JSON object with a single key "steps", which is a list of objects.
+Each object in the "steps" list must have:
+- "code_segment": The exact code snippet for that step.
+- "explanation": A concise explanation of what that code does.
+
+These code segments along with their explanations will be passed through a checker to evaluate the code.
+MAKE SURE THE ENTIRE CODE SNIPPET CAN BE OBTAINED BY CONCANTENATING THE CODE SEGMENTS.
+Otherwise, the plan checker may improperly evaluate the code.
+
+Code:
+{CODE}
+"""
+
+HIRE_DECOMPOSER_WITH_PROBLEM_AT_MOST_N = """
+Analyze the following Python code and decompose it into AT MOST {N} portions, taking into account the requirements in the problem description.
+Return the result as a valid JSON object with a single key "steps", which is a list of objects.
+Each object in the "steps" list must have:
+- "code_segment": The exact code snippet for that step.
+- "explanation": A concise explanation of what that code does.
+
+These code segments along with their explanations will be passed through a checker to evaluate the code.
+MAKE SURE THE ENTIRE GIVEN CODE SNIPPET CAN BE OBTAINED BY CONCANTENATING THE CODE SEGMENTS. DO NOT LEAVE OUT PORTIONS OF THE CODE.
+DO NOT SPLIT UP LINES OF CODE ACROSS SEGEMENTS.
+Otherwise, the plan checker may improperly evaluate the code.
+
+Problem:
+{PROBLEM}
+
+Code:
+{CODE}
+"""
+
+HIRE_EXPLAINER = """
+Analyze the following code and explain it in natural language. Your description should be clear and detailed. 
+Ideally, someone reading your description should be able to implement the code from scratch.
+
+Code:
+{CODE}
+"""
+
+HIRE_EXPLAINER_QUERY_AWARE = """
+Analyze the following code and explain it in natural language, taking into account the requirements in the problem description.
+Your description should be clear and detailed. Ideally, someone reading your description should be able to implement the code from scratch.
+
+Problem:
+{PROBLEM}
+
+Code:
+{CODE}
+"""
+
+HIRE_EXPLAINER_CHECKER = """
+You will be given a natural language explanation of a code snippet for the following task: {PROBLEM}
+Just based on the explanation, analyze and determine the correctness of the code snippet.
+Return the result as a valid JSON object with starting with a key "correct", which is a boolean.
+Please provide the reasoning in a key "reasoning".
+Explanation:
+{EXPLANATION}
+"""
 
 HIRE_PLAN_CHECKER = """
 Analyze and determine the correctness of the following high-level plan for a code solution to the following task: {PROBLEM}.
@@ -254,4 +330,78 @@ Problem description:
 {PROBLEM}
 Code:```{PROGRAM_LANGUAGE_LOWER}
 {CODE}```
+"""
+
+HIRE_COMMENTOR_CODE_CHECKER = """
+Analyze the following augmented code snippet for a code solution to the following task: {PROBLEM}.
+The code has been augmented with comments from a SUMMARIZER AGENT. These comments explain the purpose of the code segments.
+You are part of the same pipeline as the SUMMARIZER AGENT, so those comments should be heavily incorporated into your evaluation.
+
+Return the result as a valid JSON object starting with a key "correct", which is a boolean.
+Please provide the reasoning in a key "reasoning".
+
+Augmented Code:
+{AUGMENTED_CODE}
+"""
+
+HIRE_AGGREGATOR = """
+You are an expert code evaluator aggregating insights from multiple agents to determine the correctness of a solution.
+Problem Statement: {PROBLEM}
+Code Snippet:
+{CODE}
+
+Agent 1 Analysis:
+{PLAN_REASONING}
+
+Agent 2 Analysis:
+{COMMENTOR_REASONING}
+
+Based on the code and the analyses from both agents, determine if the code is correct.
+Return the result as a valid JSON object starting with a key "correct", which is a boolean.
+Please provide your synthesized reasoning in a key "reasoning".
+"""
+
+HIRE_AGGREGATOR_A2_AWARE = """
+You are an expert code evaluator aggregating insights from multiple agents to determine the correctness of a solution.
+Problem Statement: {PROBLEM}
+Code Snippet:
+{CODE}
+
+Agent 1 Analysis:
+{PLAN_REASONING}
+
+Agent 2 Analysis:
+{COMMENTOR_REASONING}
+
+Based on the code and the analyses from both agents, determine if the code is correct.
+Note that Agent 2 tends to be overly-critical of code, having a higher False Negative Rate.
+
+Return the result as a valid JSON object starting with a key "correct", which is a boolean.
+Please provide your synthesized reasoning in a key "reasoning".
+"""
+
+HIRE_EXPLAINER_VANILLA_AGGREGATOR = """
+You are an expert code evaluator specializing in resolving discrepancies between two different evaluation agents.
+
+Input Context:
+- Problem Statement: {PROBLEM}
+- Code Snippet:
+{CODE}
+
+Agent 1 (HIRE Explainer) Analysis:
+{EXPLAINER_ANALYSIS}
+Note: This agent evaluates the code based on a natural language explanation. It is excellent at catching high-level logic inversions but can be susceptible to "missing code" hallucinations and is often overly lenient on functional edge cases (treating them as minor limitations).
+
+Agent 2 (Vanilla Evaluation) Analysis:
+{VANILLA_ANALYSIS}
+Note: This agent evaluates the code directly. It is highly detailed regarding functional correctness and edge cases but can be hyper-critical, marking canonical solutions as "Incorrect" for minor stylistic or non-standard (but valid) implementations.
+
+Your Task:
+Synthesize these analyses into a final determination of correctness.
+1. Logic Guard: If Agent 1 identifies a major logic inversion (the code does the opposite of the requirement) that Agent 2 missed, favor Agent 1's NEGATIVE verdict.
+2. Functional Guard: If Agent 1 flags code as "missing" or "incomplete" but Agent 2 confirms the code exists and functions correctly, favor Agent 2's POSITIVE verdict.
+3. Edge Case Resolution: If Agent 2 flags a "missing edge case" and Agent 1 acknowledges it as a "limitation," determine if it violates a core algorithmic invariant of the problem (e.g., Python_6's parentheses balancing). If it's a core invariant, the code is INCORRECT. If it's a minor boundary case (e.g., handling None/Empty in a way not explicitly forbidden), the code is CORRECT.
+
+Return the result as a valid JSON object starting with a key "correct", which is a boolean.
+Provide your synthesized reasoning in a key "reasoning", explaining how you resolved any disagreement.
 """
