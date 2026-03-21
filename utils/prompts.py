@@ -5,7 +5,12 @@ Use a {PROGRAM_LANGUAGE} code block to write your response. For example:
 // Your implementation here
 ```"""
 
-
+VANILLA_EVAL_BINARY_NO_REASONING = """
+Determine the correctness of the code snippet.
+Return the result as a valid JSON object with starting with a key "correct", which is a boolean.
+Problem Statement: {PROBLEM}
+Code Snippet: {CODE}
+"""
 
 VANILLA_EVAL_BINARY = """
 Determine the correctness of the code snippet.
@@ -14,6 +19,66 @@ Please provide the reasoning in a key "reasoning".
 Problem Statement: {PROBLEM}
 Code Snippet: {CODE}
 """
+
+#https://arxiv.org/pdf/2508.12358
+TWO_PHASE_REFLECTIVE_EVAL = """
+“Phase 1 – Extract Contract Obligations.” Read the requirement and extract its
+intended functional obligations. List the main things the code is expected to do,
+including input-output behavior, edge-case handling, and any conditions or constraints.
+Problem Statement: {PROBLEM}
+“Phase 2 – Audit and Verdict.” Carefully examine the code and check whether it fulfills
+each obligation you listed above. If an obligation is fully met, mark it as Satisfied;
+if it is partially or incorrectly implemented, mark it as Not satisfied. Based on the
+audit, decide: Does the code fulfill all essential obligations from the requirement?
+Return the evaluation result as a valid JSON object with starting with a key "correct", which is a boolean.
+Please provide the reasoning in a key "reasoning".
+Code Snippet: {CODE}
+"""
+
+TWO_PHASE_REFLECTIVE_EVAL_EXPLANATION = """
+“Phase 1 – Extract Contract Obligations.” Read the requirement and extract its
+intended functional obligations. List the main things the code is expected to do,
+including input-output behavior, edge-case handling, and any conditions or constraints.
+Problem Statement: {PROBLEM}
+“Phase 2 – Audit and Verdict.” Carefully examine the explanation and check whether it fulfills
+each obligation you listed above. If an obligation is fully met, mark it as Satisfied;
+if it is partially or incorrectly implemented, mark it as Not satisfied. Based on the
+audit, decide: Does the described algorithm fulfill all essential obligations from the requirement?
+Return the evaluation result as a valid JSON object with starting with a key "correct", which is a boolean.
+Please provide the reasoning in a key "reasoning".
+Explanation: {EXPLANATION}
+"""
+
+BEHAVIOR_COMPARISON = """
+Please summarize the main functions and boundary conditions that the program
+should implement. Then read the code and describe what functions the code actually
+completes and how the key steps are implemented. Finally, compare the code behavior
+with the requirements point-by-point to determine whether they are consistent.
+Return the evaluation result as a valid JSON object with starting with a key "correct", which is a boolean.
+Please provide the reasoning in a key "reasoning".
+Problem Statement: {PROBLEM}
+Code Snippet: {CODE}
+"""
+
+BEHAVIOR_COMPARISON_NO_RC = """
+Read the code and describe what functions the code actually completes and how the key steps are implemented. Then, compare the code behavior with the requirements point-by-point to determine whether they are consistent.
+Return the evaluation result as a valid JSON object with starting with a key "correct", which is a boolean.
+Please provide the reasoning in a key "reasoning".
+Problem Statement: {PROBLEM}
+Code Snippet: {CODE}
+"""
+
+BEHAVIOR_COMPARISON_EXPLANATION = """
+Please summarize the main functions and boundary conditions that the program
+should implement. Then read the explanation and describe what functions the described
+code actually completes and how the key steps are implemented. Finally, compare the
+described behavior with the requirements point-by-point to determine whether they are consistent.
+Return the evaluation result as a valid JSON object with starting with a key "correct", which is a boolean.
+Please provide the reasoning in a key "reasoning".
+Problem Statement: {PROBLEM}
+Explanation: {EXPLANATION}
+"""
+
 
 #From https://arxiv.org/pdf/2410.02184#page=18.10
 CODEJUDGE_ANALYSIS = """
@@ -196,6 +261,16 @@ Code:
 {CODE}
 """
 
+HIRE_EXPLAINER_OBJ = """
+Analyze the following code and explain it in natural language as a neutral code-to-text reporter.
+Describe exactly what the code does, even if its behavior is logically flawed.
+Conduct example walkthroughs based strictly on the described implementation logic, even if the result is incorrect according to the problem description.
+DO NOT provide any critiques, optimizations, or additional commentary.
+
+Code:
+{CODE}
+"""
+
 HIRE_EXPLAINER_QUERY_AWARE = """
 Analyze the following code and explain it in natural language, taking into account the requirements in the problem description.
 Your description should be clear and detailed. Ideally, someone reading your description should be able to implement the code from scratch.
@@ -207,9 +282,359 @@ Code:
 {CODE}
 """
 
+HIRE_EXPLAINER_OBJ_QUERY_AWARE = """
+Analyze the following code and explain it in natural language as a neutral code-to-text reporter, taking into account the requirements in the problem description.
+Describe exactly what the code does, even if its behavior is logically flawed or contradicts the problem requirements.
+Conduct example walkthroughs based strictly on the described implementation logic, even if the result is incorrect according to the problem description.
+DO NOT provide any critiques, optimizations, or additional commentary.
+
+Problem:
+{PROBLEM}
+
+Code:
+{CODE}
+"""
+
+# HIRE Pseudocode Generator
+# HIRE Pseudocode Generator
+HIRE_PSEUDO = """
+Analyze the following code and provide a clean, high-level pseudocode representation of the logic.
+The pseudocode should be language-agnostic and focus on the algorithmic steps.
+DO NOT provide any critiques, optimizations, or additional commentary outside of the pseudocode itself.
+
+Code:
+{CODE}
+"""
+
+HIRE_PSEUDO_QUERY_AWARE = """
+Analyze the following code and provide a clean, high-level pseudocode representation of the logic, taking into account the problem description.
+The pseudocode should be language-agnostic and focus on the algorithmic steps.
+DO NOT provide any critiques, optimizations, or additional commentary outside of the pseudocode itself.
+
+Problem:
+{PROBLEM}
+
+Code:
+{CODE}
+"""
+
+# Pseudo Lambda Levels
+HIRE_PSEUDO_L1 = """
+Analyze the following code and provide an ultra high-level pseudocode representation of the core algorithmic goal.
+Only include the most critical logic steps.
+DO NOT provide any critiques, optimizations, or additional commentary outside of the pseudocode itself.
+
+Code:
+{CODE}
+"""
+
+HIRE_PSEUDO_L1_QUERY_AWARE = """
+Analyze the following code and provide an ultra high-level pseudocode representation of the core algorithmic goal, taking into account the problem description.
+Only include the most critical logic steps.
+DO NOT provide any critiques, optimizations, or additional commentary outside of the pseudocode itself.
+
+Problem:
+{PROBLEM}
+
+Code:
+{CODE}
+"""
+
+HIRE_PSEUDO_L3 = """
+Analyze the following code and provide a high-level pseudocode representation of the main algorithm.
+Focus on the primary data flow and key logical checkpoints.
+DO NOT provide any critiques, optimizations, or additional commentary outside of the pseudocode itself.
+
+Code:
+{CODE}
+"""
+
+HIRE_PSEUDO_L3_QUERY_AWARE = """
+Analyze the following code and provide a high-level pseudocode representation of the main algorithm, taking into account the problem description.
+Focus on the primary data flow and key logical checkpoints.
+DO NOT provide any critiques, optimizations, or additional commentary outside of the pseudocode itself.
+
+Problem:
+{PROBLEM}
+
+Code:
+{CODE}
+"""
+
+HIRE_PSEUDO_L5 = HIRE_PSEUDO
+HIRE_PSEUDO_L5_QUERY_AWARE = HIRE_PSEUDO_QUERY_AWARE
+
+HIRE_PSEUDO_L8 = """
+Analyze the following code and provide a detailed pseudocode representation of the logic.
+Include important edge-case handling, boundary conditions, and state transitions.
+DO NOT provide any critiques, optimizations, or additional commentary outside of the pseudocode itself.
+
+Code:
+{CODE}
+"""
+
+HIRE_PSEUDO_L8_QUERY_AWARE = """
+Analyze the following code and provide a detailed pseudocode representation of the logic, taking into account the problem description.
+Include important edge-case handling, boundary conditions, and state transitions.
+DO NOT provide any critiques, optimizations, or additional commentary outside of the pseudocode itself.
+
+Problem:
+{PROBLEM}
+
+Code:
+{CODE}
+"""
+
+HIRE_PSEUDO_L10 = """
+Analyze the following code and provide an exhaustive pseudocode representation of the logic.
+Explicitly capture all boundary checks, logical invariants, and fine-grained data transformations.
+DO NOT provide any critiques, optimizations, or additional commentary outside of the pseudocode itself.
+
+Code:
+{CODE}
+"""
+
+HIRE_PSEUDO_L10_QUERY_AWARE = """
+Analyze the following code and provide an exhaustive pseudocode representation of the logic, taking into account the problem description.
+Explicitly capture all boundary checks, logical invariants, and fine-grained data transformations.
+DO NOT provide any critiques, optimizations, or additional commentary outside of the pseudocode itself.
+
+Problem:
+{PROBLEM}
+
+Code:
+{CODE}
+"""
+
+HIRE_EXPLAINER_L5 = HIRE_EXPLAINER
+HIRE_EXPLAINER_L5_QUERY_AWARE = HIRE_EXPLAINER_QUERY_AWARE
+
+HIRE_EXPLAINER_OBJ_L5 = HIRE_EXPLAINER_OBJ
+HIRE_EXPLAINER_OBJ_L5_QUERY_AWARE = HIRE_EXPLAINER_OBJ_QUERY_AWARE
+
+HIRE_PSEUDO_CHECKER = """
+You will be provided with a problem statement and a pseudocode representation of a solution.
+Your task is to determine if the logic described in the pseudocode accurately and completely solves the problem.
+
+Evaluation Guidelines:
+1. Focus on the core algorithmic logic and correctness relative to the problem requirements.
+2. If the pseudocode is at a high-level (common for lower lambda levels), do not penalize it for omitting trivial implementation details (e.g., specific variable declarations or language-specific boilerplate) unless they are critical to the algorithm's correctness.
+3. Ignore any additional commentary, critiques, or optimization suggestions that may be present in the pseudocode input; focus only on the logic itself.
+4. Ensure the pseudocode logic correctly handles the primary task and necessary invariants.
+
+Return the result as a valid JSON object starting with a key "correct", which is a boolean.
+Please provide your reasoning in a key "reasoning".
+
+Problem Statement:
+{PROBLEM}
+
+Pseudocode:
+{PSEUDOCODE}
+"""
+
+
+# Lambda-Controlled Explainers (Strictness/Edge-Case Exposure)
+
+# Lambda 1 (Most Permissive)
+HIRE_EXPLAINER_L1 = """
+Analyze the following code and provide a high-level overview of the core task goal. 
+Ignore specific implementation details and edge cases. 
+Focus only on what the code is trying to achieve at a high level.
+
+Code:
+{CODE}
+"""
+
+HIRE_EXPLAINER_OBJ_L1 = """
+Analyze the following code and provide a high-level overview of the core task goal as a neutral code-to-text reporter. 
+Describe exactly what the code is attempting to achieve, even if its behavior is logically flawed.
+Ignore specific implementation details and edge cases, but do not hallucinate success.
+DO NOT provide any critiques, optimizations, or additional commentary.
+
+Code:
+{CODE}
+"""
+
+HIRE_EXPLAINER_L1_QUERY_AWARE = """
+Analyze the following code and provide a high-level overview of the core task goal, taking into account the requirements in the problem description.
+Ignore specific implementation details and edge cases. 
+Focus only on what the code is trying to achieve at a high level.
+
+Problem:
+{PROBLEM}
+
+Code:
+{CODE}
+"""
+
+HIRE_EXPLAINER_OBJ_L1_QUERY_AWARE = """
+Analyze the following code and provide a high-level overview of the core task goal as a neutral code-to-text reporter, taking into account the requirements in the problem description.
+Describe exactly what the code is attempting to achieve relative to the problem, even if its behavior is logically flawed.
+Ignore specific implementation details and edge cases, but do not hallucinate success.
+DO NOT provide any critiques, optimizations, or additional commentary.
+
+Problem:
+{PROBLEM}
+
+Code:
+{CODE}
+"""
+
+# Lambda 3 (Balanced algorithm/assumptions)
+HIRE_EXPLAINER_L3 = """
+Analyze the following code and explain the main algorithm and the key assumptions it makes. 
+Do not speculate about potential edge cases or failure modes not explicitly handled in the code.
+
+Code:
+{CODE}
+"""
+
+HIRE_EXPLAINER_OBJ_L3 = """
+Analyze the following code and explain the main algorithm and the key assumptions it makes as a neutral code-to-text reporter. 
+Describe exactly what the code does, even if its behavior is logically flawed.
+Conduct example walkthroughs based strictly on the described implementation logic.
+Do not speculate about potential edge cases or failure modes not explicitly handled in the code.
+DO NOT provide any critiques, optimizations, or additional commentary.
+
+Code:
+{CODE}
+"""
+
+HIRE_EXPLAINER_L3_QUERY_AWARE = """
+Analyze the following code and explain the main algorithm and the key assumptions it makes, taking into account the requirements in the problem description.
+Do not speculate about potential edge cases or failure modes not explicitly handled in the code.
+
+Problem:
+{PROBLEM}
+
+Code:
+{CODE}
+"""
+
+HIRE_EXPLAINER_OBJ_L3_QUERY_AWARE = """
+Analyze the following code and explain the main algorithm and the key assumptions it makes as a neutral code-to-text reporter, taking into account the requirements in the problem description.
+Describe exactly what the code does, even if its behavior is logically flawed or contradicts the problem requirements.
+Conduct example walkthroughs based strictly on the described implementation logic.
+Do not speculate about potential edge cases or failure modes not explicitly handled in the code.
+DO NOT provide any critiques, optimizations, or additional commentary.
+
+Problem:
+{PROBLEM}
+
+Code:
+{CODE}
+"""
+
+# Lambda 5 (Standard HIRE style)
+HIRE_EXPLAINER_L5 = HIRE_EXPLAINER
+
+HIRE_EXPLAINER_L5_QUERY_AWARE = HIRE_EXPLAINER_QUERY_AWARE
+
+# Lambda 8 (Detailed with edge cases)
+HIRE_EXPLAINER_L8 = """
+Analyze the following code and provide a detailed natural language explanation.
+Importantly, include a discussion of possible missing edge cases, boundary conditions, and any potential limitations in the current implementation.
+
+Code:
+{CODE}
+"""
+
+HIRE_EXPLAINER_OBJ_L8 = """
+Analyze the following code and provide a detailed natural language explanation as a neutral code-to-text reporter.
+Describe exactly what the code does, even if its behavior is logically flawed.
+Conduct example walkthroughs based strictly on the described implementation logic.
+Importantly, include a discussion of possibly missing edge cases or boundary conditions based on the implementation's current state.
+DO NOT provide any critiques, optimizations, or additional commentary.
+
+Code:
+{CODE}
+"""
+
+HIRE_EXPLAINER_L8_QUERY_AWARE = """
+Analyze the following code and provide a detailed natural language explanation, taking into account the requirements in the problem description.
+Importantly, include a discussion of possible missing edge cases, boundary conditions, and any potential limitations in the current implementation.
+
+Problem:
+{PROBLEM}
+
+Code:
+{CODE}
+"""
+
+HIRE_EXPLAINER_OBJ_L8_QUERY_AWARE = """
+Analyze the following code and provide a detailed natural language explanation as a neutral code-to-text reporter, taking into account the requirements in the problem description.
+Describe exactly what the code does, even if its behavior is logically flawed or contradicts the problem requirements.
+Conduct example walkthroughs based strictly on the described implementation logic.
+Importantly, include a discussion of possibly missing edge cases or boundary conditions relative to the problem description.
+DO NOT provide any critiques, optimizations, or additional commentary.
+
+Problem:
+{PROBLEM}
+
+Code:
+{CODE}
+"""
+
+# Lambda 10 (Most Conservative)
+HIRE_EXPLAINER_L10 = """
+Analyze the following code and provide an exhaustive natural language explanation.
+Explicitly enumerate and discuss all potential unhandled edge cases, failure modes, and logical vulnerabilities in the implementation.
+
+Code:
+{CODE}
+"""
+
+HIRE_EXPLAINER_OBJ_L10 = """
+Analyze the following code and provide an exhaustive natural language explanation as a neutral code-to-text reporter.
+Describe exactly what the code does, even if its behavior is logically flawed.
+Conduct exhaustive example walkthroughs based strictly on the described implementation logic.
+Explicitly enumerate and discuss all missing edge cases, failure modes, and logical vulnerabilities in the current implementation.
+DO NOT provide any critiques, optimizations, or additional commentary.
+
+Code:
+{CODE}
+"""
+
+HIRE_EXPLAINER_L10_QUERY_AWARE = """
+Analyze the following code and provide an exhaustive natural language explanation, taking into account the requirements in the problem description.
+Explicitly enumerate and discuss all potential unhandled edge cases, failure modes, and logical vulnerabilities in the implementation relative to the problem description.
+
+Problem:
+{PROBLEM}
+
+Code:
+{CODE}
+"""
+
+HIRE_EXPLAINER_OBJ_L10_QUERY_AWARE = """
+Analyze the following code and provide an exhaustive natural language explanation as a neutral code-to-text reporter, taking into account the requirements in the problem description.
+Describe exactly what the code does, even if its behavior is logically flawed or contradicts the problem requirements.
+Conduct exhaustive example walkthroughs based strictly on the described implementation logic.
+Explicitly enumerate and discuss all missing edge cases, failure modes, and logical vulnerabilities relative to the problem description.
+DO NOT provide any critiques, optimizations, or additional commentary.
+
+Problem:
+{PROBLEM}
+
+Code:
+{CODE}
+"""
+
 HIRE_EXPLAINER_CHECKER = """
 You will be given a natural language explanation of a code snippet for the following task: {PROBLEM}
 Just based on the explanation, analyze and determine the correctness of the code snippet.
+Make sure the explanation (and thus the code it describes) is aligned with the task description.
+Return the result as a valid JSON object with starting with a key "correct", which is a boolean.
+Please provide the reasoning in a key "reasoning".
+Explanation:
+{EXPLANATION}
+"""
+
+HIRE_EXPLAINER_ALIGNMENT_CHECKER = """
+You will be given a natural language explanation of a code snippet for the following task: {PROBLEM}
+Just based on the explanation, analyze and determine if the explanation of the code is correct with respect to the problem description.
+Specifically, check if the explanation covers all the requirements in the problem description and if the explanation is consistent with the problem description.
+Assume the explanation faithfully describes the code. DO NOT say the explanation does not align with the problem description just because you do not have the implementation.
 Return the result as a valid JSON object with starting with a key "correct", which is a boolean.
 Please provide the reasoning in a key "reasoning".
 Explanation:
@@ -405,3 +830,162 @@ Synthesize these analyses into a final determination of correctness.
 Return the result as a valid JSON object starting with a key "correct", which is a boolean.
 Provide your synthesized reasoning in a key "reasoning", explaining how you resolved any disagreement.
 """
+
+# Experimental TNR Fix Variants (A: Faithful Walkthrough)
+
+HIRE_EXPLAINER_OBJ_L1_QUERY_AWARE_FAITHFUL = HIRE_EXPLAINER_OBJ_L1_QUERY_AWARE + "\n**FAITHFULNESS IS CRITICAL**: Describe only the code's actual intent. Do not hallucinate success."
+HIRE_EXPLAINER_OBJ_L3_QUERY_AWARE_FAITHFUL = HIRE_EXPLAINER_OBJ_L3_QUERY_AWARE.replace(
+    "Conduct example walkthroughs based strictly on the described implementation logic.",
+    "Conduct example walkthroughs based strictly on the described implementation logic. **FAITHFULNESS IS CRITICAL**: If the code's logic is flawed or inverted, the walkthrough MUST reflect that flaw. Do NOT hallucinate a successful result if the code actually fails."
+)
+HIRE_EXPLAINER_OBJ_L5_QUERY_AWARE_FAITHFUL = HIRE_EXPLAINER_OBJ_QUERY_AWARE.replace(
+    "Conduct example walkthroughs based strictly on the described implementation logic, even if the result is incorrect according to the problem description.",
+    "Conduct example walkthroughs based strictly on the described implementation logic. **FAITHFULNESS IS CRITICAL**: If the code's logic is flawed or inverted, the walkthrough MUST reflect that flaw. Do NOT hallucinate a successful result if the code actually fails."
+)
+HIRE_EXPLAINER_OBJ_L8_QUERY_AWARE_FAITHFUL = HIRE_EXPLAINER_OBJ_L8_QUERY_AWARE.replace(
+    "Conduct example walkthroughs based strictly on the described implementation logic.",
+    "Conduct example walkthroughs based strictly on the described implementation logic. **FAITHFULNESS IS CRITICAL**: If the code's logic is flawed or inverted, the walkthrough MUST reflect that flaw. Do NOT hallucinate a successful result if the code actually fails."
+)
+HIRE_EXPLAINER_OBJ_L10_QUERY_AWARE_FAITHFUL = HIRE_EXPLAINER_OBJ_L10_QUERY_AWARE.replace(
+    "Conduct exhaustive example walkthroughs based strictly on the described implementation logic.",
+    "Conduct exhaustive example walkthroughs based strictly on the described implementation logic. **FAITHFULNESS IS CRITICAL**: If the code's logic is flawed or inverted, the walkthrough MUST reflect that flaw. Do NOT hallucinate a successful result if the code actually fails."
+)
+
+HIRE_EXPLAINER_ALIGNMENT_CHECKER_FAITHFUL = HIRE_EXPLAINER_ALIGNMENT_CHECKER.replace(
+    "Assume the explanation faithfully describes the code.",
+    "Assume the explanation faithfully describes the code. **CRITICAL CONSISTENCY CHECK**: Compare the algorithm description with the walkthroughs. If the algorithm describes a logic flaw but the walkthrough claims success, this is an internal contradiction and a failure of alignment."
+)
+
+# Experimental TNR Fix Variants (B: No Walkthrough)
+
+HIRE_EXPLAINER_OBJ_L1_QUERY_AWARE_NO_WT = HIRE_EXPLAINER_OBJ_L1_QUERY_AWARE + "\nDescribe exactly what the code does as a neutral reporter. Do not perform any I/O analysis or evaluations of correctness."
+HIRE_EXPLAINER_OBJ_L3_QUERY_AWARE_NO_WT = HIRE_EXPLAINER_OBJ_L3_QUERY_AWARE.replace(
+    "Conduct example walkthroughs based strictly on the described implementation logic.", 
+    "Describe exactly what the code does as a neutral reporter. Do not perform any I/O analysis, walkthroughs, or evaluations of correctness."
+)
+HIRE_EXPLAINER_OBJ_L5_QUERY_AWARE_NO_WT = HIRE_EXPLAINER_OBJ_QUERY_AWARE.replace(
+    "Conduct example walkthroughs based strictly on the described implementation logic, even if the result is incorrect according to the problem description.",
+    "Describe exactly what the code does as a neutral reporter. Do not perform any I/O analysis, walkthroughs, or evaluations of correctness."
+)
+HIRE_EXPLAINER_OBJ_L8_QUERY_AWARE_NO_WT = HIRE_EXPLAINER_OBJ_L8_QUERY_AWARE.replace(
+    "Conduct example walkthroughs based strictly on the described implementation logic.",
+    "Describe exactly what the code does as a neutral reporter. Do not perform any I/O analysis, walkthroughs, or evaluations of correctness."
+)
+HIRE_EXPLAINER_OBJ_L10_QUERY_AWARE_NO_WT = HIRE_EXPLAINER_OBJ_L10_QUERY_AWARE.replace(
+    "Conduct exhaustive example walkthroughs based strictly on the described implementation logic.",
+    "Describe exactly what the code does as a neutral reporter. Do not perform any I/O analysis, walkthroughs, or evaluations of correctness."
+)
+
+HIRE_RECONSTRUCT = """
+You will be provided with a natural language explanation of a code snippet.
+Your task is to reproduce the original code based ONLY on this explanation.
+Ensure the code is functionally complete and follows the logic described.
+
+Explanation:
+{EXPLANATION}
+
+Provide your implementation in a code block.
+"""
+
+HIRE_RECONSTRUCT_QUERY_AWARE = """
+You will be provided with a problem statement and a natural language explanation of a code snippet that supposedly solves it.
+Your task is to reproduce the code based on the explanation, ensuring it also satisfies the problem requirements.
+Ensure the code is functionally complete and follows the logic described.
+
+Problem Statement:
+{PROBLEM}
+
+Explanation:
+{EXPLANATION}
+
+Provide your implementation in a code block.
+"""
+
+HIRE_EXPLANATION_FEEDBACK = """
+You will be provided with three pieces of information:
+1. Original Code: The reference implementation of a function.
+2. Explanation: A natural language description of how that code works.
+3. Reconstructed Code: An implementation that was written based solely on the explanation.
+
+Your task is to provide feedback on how the explanation can better reflect the functionality of the original code. 
+Identify any discrepancies between the original code and the reconstructed code, and explain how the explanation caused these discrepancies (e.g., by being too vague, omitting details, or having inaccuracies). 
+Finally, suggest specific improvements to the explanation. Your feedback will be used to update the explanation. In your feedback: DO NOT RECOMMEND CHANGES TO THE CODE
+
+
+Original Code:
+{ORIGINAL_CODE}
+
+Explanation:
+{EXPLANATION}
+
+Reconstructed Code:
+{RECONSTRUCTED_CODE}
+"""
+
+HIRE_UPDATE_EXPLANATION = """
+You are provided with the original code, an initial natural language explanation of that code, and feedback regarding how the explanation can be improved to better reflect the functionality of the original code.
+
+Your task is to provide an updated, improved natural language explanation that addresses all the points in the feedback and faithfully describes the original code.
+The updated explanation should be clear, detailed, and accurate.
+
+Problem:
+{PROBLEM}
+
+Original Code:
+{ORIGINAL_CODE}
+
+Initial Explanation:
+{EXPLANATION}
+
+Feedback:
+{FEEDBACK}
+
+Updated Explanation:
+"""
+
+HIRE_DIRECT_UPDATE_EXPLANATION = """
+You are provided with the original code, an initial natural language explanation of that code, and a version of the code that was reconstructed based solely on that explanation.
+
+Your task is to provide an updated, improved natural language explanation that addresses any discrepancies between the original code and the reconstructed code.
+Identify where the initial explanation was vague, incomplete, or inaccurate, and provide a new explanation that is clear, detailed, and faithfully describes the original code.
+
+Problem:
+{PROBLEM}
+
+Original Code:
+{ORIGINAL_CODE}
+
+Initial Explanation:
+{EXPLANATION}
+
+Reconstructed Code:
+{RECONSTRUCTED_CODE}
+
+Updated Explanation:
+"""
+
+HIRE_SELF_REFINE_EXPLANATION = """
+You are provided with the original code and an initial natural language explanation of that code.
+
+Your task is to refine and improve the initial explanation so it more accurately and comprehensively reflects the functionality of the original code. 
+Reflect on the initial explanation:
+- Are there any missing details?
+- Is any part of the explanation misleading or inaccurate?
+- Is the level of detail appropriate for someone trying to understand or reproduce the code?
+
+Provide an updated, improved explanation that is clear, detailed, and faithful to the original code.
+
+Problem:
+{PROBLEM}
+
+Original Code:
+{ORIGINAL_CODE}
+
+Initial Explanation:
+{EXPLANATION}
+
+Updated Explanation:
+"""
+
+
+

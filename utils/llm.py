@@ -14,6 +14,10 @@ TOGETHER_AI_MODELS = [
 OPENAI_MODELS = [
     "gpt-4o",
     "gpt-4o-mini",
+    "gpt-5.2-mini",
+    "gpt-5.1",
+    "gpt-5-o",
+    "gpt-5-mini",
 ]
 
 

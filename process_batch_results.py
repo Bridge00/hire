@@ -129,7 +129,27 @@ def process_and_cache_results(results_file: str, dataset: str, code_gen_model: s
     print(f"Errors encountered: {error_count}")
     print(f"Cache location: {structured_cache_dir}")
 
-def parse_filename_metadata(results_file: str):
+def parse_ds_source(ds_source):
+    """Split ds_source into dataset and code_gen_model."""
+    KNOWN_DATASETS_UNDERSCORE = ["humaneval_py", "humaneval_java", "humaneval_js", "humaneval_cpp", "humaneval_go"]
+    dataset = None
+    code_gen_model = None
+    
+    KNOWN_DATASETS_UNDERSCORE.sort(key=len, reverse=True)
+    for known_ds in KNOWN_DATASETS_UNDERSCORE:
+        if ds_source.startswith(known_ds + "_"):
+            dataset = known_ds
+            code_gen_model = ds_source[len(known_ds)+1:]
+            break
+    
+    if not dataset and '_' in ds_source:
+        dataset_split = ds_source.split('_', 1)
+        dataset = dataset_split[0]
+        code_gen_model = dataset_split[1]
+    
+    return dataset, code_gen_model
+
+def parse_filename_metadata(basename: str):
     """
     Parse metadata from batch results filename.
     
@@ -144,20 +164,73 @@ def parse_filename_metadata(results_file: str):
         For code gen: (dataset, code_gen_model, None, None)
         For eval: (dataset, code_gen_model, eval_model, eval_prompt_type)
     """
-    basename = os.path.basename(results_file)
+    basename = os.path.basename(basename)
+    
+    code_gen_model = None
+    dataset = None
+    eval_model = None
+    eval_prompt_type = None
     
     # KNOWN PROMPTS (from generate_batch.py/utils.prompts)
     # We use these to robustly split the filename.
     # Order matters: more specific (longer) prompts first to avoid partial matches
     KNOWN_PROMPTS = [
+        "hire_explanation_self_refine",
+        "hire_explanation_direct_update",
+        "hire_explanation_update",
+        "hire_explanation_feedback",
         "hire_aggregator_a2_aware_query_aware_flexible",
         "hire_aggregator_a2_aware_flexible",
         "hire_aggregator_query_aware_flexible",
         "hire_aggregator_flexible",
+        "hire_explainer_obj_alignment_checker_query_aware_lambda",
+        "hire_explainer_obj_alignment_checker_lambda",
+        "hire_explainer_obj_alignment_checker_query_aware",
+        "hire_explainer_obj_alignment_checker",
+        "hire_explainer_obj_checker_query_aware_lambda",
+        "hire_explainer_obj_checker_lambda",
+        "hire_explainer_obj_query_aware_lambda",
+        "hire_explainer_obj_lambda",
+        "hire_explainer_obj_checker_query_aware",
+        "hire_explainer_obj_checker",
+        "hire_explainer_obj_query_aware",
+        "hire_explainer_obj",
+        "hire_explainer_alignment_checker_query_aware_lambda",
+        "hire_explainer_alignment_checker_lambda",
+        "hire_explainer_alignment_checker_query_aware",
+        "hire_explainer_alignment_checker",
+        "hire_explainer_checker_query_aware_lambda",
+        "hire_explainer_checker_lambda",
+        "hire_explainer_query_aware_lambda",
+        "hire_explainer_lambda",
         "hire_explainer_checker_query_aware",
         "hire_explainer_checker",
         "hire_explainer_query_aware",
         "hire_explainer",
+        "hire_pseudo_obj_alignment_checker_query_aware_lambda",
+        "hire_pseudo_obj_alignment_checker_lambda",
+        "hire_pseudo_obj_alignment_checker_query_aware",
+        "hire_pseudo_obj_alignment_checker",
+        "hire_pseudo_obj_checker_query_aware_lambda",
+        "hire_pseudo_obj_checker_lambda",
+        "hire_pseudo_obj_query_aware_lambda",
+        "hire_pseudo_obj_lambda",
+        "hire_pseudo_obj_checker_query_aware",
+        "hire_pseudo_obj_checker",
+        "hire_pseudo_obj_query_aware",
+        "hire_pseudo_obj",
+        "hire_pseudo_alignment_checker_query_aware_lambda",
+        "hire_pseudo_alignment_checker_lambda",
+        "hire_pseudo_alignment_checker_query_aware",
+        "hire_pseudo_alignment_checker",
+        "hire_pseudo_checker_query_aware_lambda",
+        "hire_pseudo_checker_lambda",
+        "hire_pseudo_query_aware_lambda",
+        "hire_pseudo_lambda",
+        "hire_pseudo_checker_query_aware",
+        "hire_pseudo_checker",
+        "hire_pseudo_query_aware",
+        "hire_pseudo",
         "hire_commentor_checker_query_aware_flexible",
         "hire_commentor_checker_flexible",
         "hire_plan_checker_query_aware_text_only_flexible",
@@ -183,13 +256,50 @@ def parse_filename_metadata(results_file: str):
         "cj_summary",
         "ice_correctness",
         "ice_usefulness",
+        "vanilla_no_reasoning",
+        "behavior_comparison",
+        "behavior_comparison_no_rc",
+        "two_phase_reflective",
         "vanilla"
     ]
     
     # Sort by length descending to match longest first
     KNOWN_PROMPTS.sort(key=len, reverse=True)
 
-    # Try evaluation pattern first (more specific)
+    # 1. NEW REFINEMENT DETECTION (Prioritize this over evaluation)
+    # Format: dataset_SOURCE_PROMPT_eval_eval_EVALMODEL_REFINEMODEL_refine_START_END_results.jsonl
+    # Or: dataset_SOURCE_PROMPT_eval_EVALMODEL_REFINEMODEL_refine_START_END_results.jsonl (Legacy)
+    refine_match = re.search(r'_([^_]+)_refine_\d+_\d+_results\.jsonl$', basename)
+    if refine_match:
+        refine_model_name = refine_match.group(1)
+        # Part before _refine_: dataset_source_prompt_eval_eval_evalmodel
+        remaining = basename[:refine_match.start()]
+        
+        # We need to find the split point between (dataset_source_prompt) and (eval_model)
+        KNOWN_DATASETS_UNDERSCORE = ["humaneval_py", "humaneval_java", "humaneval_js", "humaneval_cpp", "humaneval_go"]
+        
+        for prompt in KNOWN_PROMPTS:
+            # Check for _{prompt}_eval_eval_ or _{prompt}_eval_
+            for mid in ["_eval_eval_", "_eval_"]:
+                # Allow optional _L\d+, _N_\d+, _k\d+ suffixes for prompt type
+                pattern = fr"_{prompt}(_L\d+)?(_N_\d+)?(_k\d+)?{mid}"
+                m = re.search(pattern, remaining)
+                if m:
+                    # Found the split point!
+                    ds_source = remaining[:m.start()]
+                    # Extract the full prompt type including suffixes
+                    eval_prompt_type = remaining[m.start()+1 : m.end()-len(mid)]
+                    eval_model = remaining[m.end():]
+                    
+                    # Split ds_source into dataset and source
+                    dataset, code_gen_model = parse_ds_source(ds_source)
+                        
+                    if dataset and code_gen_model:
+                        # Success! Use the specialized format for refinement
+                        specialized_gen_model = f"{refine_model_name}_refine_{code_gen_model}_{eval_prompt_type}_{eval_model}"
+                        return dataset, specialized_gen_model, None, None
+
+    # 2. Try standard evaluation pattern (Pattern 1)
     # Pattern 1: dataset_code_model_CODEMODEL_PROMPTTYPE_eval_eval_EVALMODEL_START_END_results.jsonl
     eval_pattern_model = r'(.+?)_code_model_(.+?)_(.+?)_eval_eval_(.+?)_\d+_\d+_results\.jsonl'
     match = re.match(eval_pattern_model, basename)
@@ -201,54 +311,40 @@ def parse_filename_metadata(results_file: str):
         eval_model = match.group(4)
         return dataset, code_gen_model, eval_model, eval_prompt_type
 
-    # Pattern 2: dataset_SOURCE_PROMPTTYPE_eval_eval_EVALMODEL_START_END_results.jsonl (for eval_source)
+    # 3. Pattern 2: dataset_SOURCE_PROMPTTYPE_eval_eval_EVALMODEL_START_END_results.jsonl (for eval_source)
     # Strategy: Iterate through known prompts and check if the filename contains _{prompt}_eval_eval_
     
     KNOWN_DATASETS_UNDERSCORE = ["humaneval_py", "humaneval_java", "humaneval_js", "humaneval_cpp", "humaneval_go"]
 
     for prompt in KNOWN_PROMPTS:
-        # Check for k-variant (e.g. vanilla_k1)
-        # Using a regex that optionally matches _k\d+ suffix for the prompt
-        # We need to construct a regex dynamically or just check strings.
-        # String check is safer.
+        # Check standard prompt (allowing optional _LX or _faithful/_no_wt suffixes)
+        # Suffixes can appear before _lambda or at the end of the prompt part
+        lambda_pattern = fr"_{prompt}([a-zA-Z0-9_-]*?)_eval_eval_"
+        lambda_match = re.search(lambda_pattern, basename)
         
-        # Check standard prompt
-        anchor = f"_{prompt}_eval_eval_"
-        if anchor in basename:
+        if lambda_match:
+            anchor = lambda_match.group(0)
             parts = basename.split(anchor)
             left_part = parts[0] # dataset_SOURCE
             right_part = parts[1] # EVALMODEL_START_END...
             
             # Extract EVALMODEL from right_part
-            # right_part looks like: gpt-4o-mini_0_39_results.jsonl
-            # match until the last digits
             eval_model_match = re.match(r'(.+?)_\d+_\d+_results\.jsonl', right_part)
             if eval_model_match:
                 eval_model = eval_model_match.group(1)
-                eval_prompt_type = prompt
+                
+                # Extract prompt type from anchor 
+                eval_prompt_type = anchor[1:-11] # Strip leading _ and trailing _eval_eval_
                 
                 # Split left_part into dataset and source
-                dataset = None
-                code_gen_model = None
-                
-                # specific check for known datasets with underscore
-                for known_ds in KNOWN_DATASETS_UNDERSCORE:
-                    if left_part.startswith(known_ds + "_"):
-                        dataset = known_ds
-                        code_gen_model = left_part[len(known_ds)+1:]
-                        break
-                
-                if not dataset and '_' in left_part:
-                    dataset_split = left_part.split('_', 1)
-                    dataset = dataset_split[0]
-                    code_gen_model = dataset_split[1]
+                dataset, code_gen_model = parse_ds_source(left_part)
                 
                 if dataset and code_gen_model:
                      return dataset, code_gen_model, eval_model, eval_prompt_type
 
         # Check k-variant (e.g. vanilla_k3)
-        # Regex for anchor: _{prompt}_k\d+_eval_eval_
-        k_anchor_pattern = fr"_{prompt}_k(\d+)_eval_eval_"
+        # Regex for anchor: _{prompt}(_L\d+)?_k\d+_eval_eval_
+        k_anchor_pattern = fr"_{prompt}([a-zA-Z0-9_-]*?)_k(\d+)_eval_eval_"
         k_match = re.search(fr"{k_anchor_pattern}(.+?)_\d+_\d+_results\.jsonl", basename)
         
         if k_match:
@@ -258,118 +354,134 @@ def parse_filename_metadata(results_file: str):
             
             # anchor: _vanilla_k1_eval_eval_
             # promt type should be: vanilla_k1
-            # k_match.group(1) is the k index (e.g. "1")
-            k_val = k_match.group(1)
-            eval_prompt_type = f"{prompt}_k{k_val}"
+            suffix_part = k_match.group(1)
+            k_val = k_match.group(2)
+            eval_prompt_type = f"{prompt}{suffix_part}_k{k_val}"
             
-            eval_model = k_match.group(2)
+            eval_model = k_match.group(3)
             
             # Split left_part into dataset and source
-            dataset = None
-            code_gen_model = None
-            
-            for known_ds in KNOWN_DATASETS_UNDERSCORE:
-                if left_part.startswith(known_ds + "_"):
-                    dataset = known_ds
-                    code_gen_model = left_part[len(known_ds)+1:]
-                    break
-            
-            if not dataset and '_' in left_part:
-                dataset_split = left_part.split('_', 1)
-                dataset = dataset_split[0]
-                code_gen_model = dataset_split[1]
+            dataset, code_gen_model = parse_ds_source(left_part)
             
             if dataset and code_gen_model:
                 return dataset, code_gen_model, eval_model, eval_prompt_type
 
         # Check N-variant (e.g. hire_decomposer_N_3)
-        # Regex for anchor: _{prompt}_N\d+_eval_eval_
+        # Regex for anchor: _{prompt}(_L\d+)?_N\d+_eval_eval_
         
-        n_anchor_pattern = fr"_{prompt}_N_(\d+)_eval_eval_"
+        n_anchor_pattern = fr"_{prompt}([a-zA-Z0-9_-]*?)_N_(\d+)_eval_eval_"
         n_match = re.search(fr"{n_anchor_pattern}(.+?)_\d+_\d+_results\.jsonl", basename)
         
         if n_match:
              match_start = n_match.start()
              left_part = basename[:match_start]
              
-             # n_match.group(1) is the N value (e.g. "3")
-             n_val = n_match.group(1)
-             eval_prompt_type = f"{prompt}_N_{n_val}"
+             # n_match.group(2) is the N value
+             suffix_part = n_match.group(1)
+             n_val = n_match.group(2)
+             eval_prompt_type = f"{prompt}{suffix_part}_N_{n_val}"
              
-             eval_model = n_match.group(2)
+             eval_model = n_match.group(3)
              
              # Split left_part into dataset and source
-             dataset = None
-             code_gen_model = None
-             
-             for known_ds in KNOWN_DATASETS_UNDERSCORE:
-                if left_part.startswith(known_ds + "_"):
-                    dataset = known_ds
-                    code_gen_model = left_part[len(known_ds)+1:]
-                    break
-             
-             if not dataset and '_' in left_part:
-                dataset_split = left_part.split('_', 1)
-                dataset = dataset_split[0]
-                code_gen_model = dataset_split[1]
+             dataset, code_gen_model = parse_ds_source(left_part)
              
              if dataset and code_gen_model:
                 return dataset, code_gen_model, eval_model, eval_prompt_type
 
-    # Pattern 3: Refinement
-    # dataset_SOURCE_PROMPT_eval_EVALMODEL_REFINEMODEL_refine_START_END_results.jsonl
-    refine_pattern = r'(.+?)_eval_(.+?)_(.+?)_refine_\d+_\d+_results\.jsonl'
-    r_match = re.match(refine_pattern, basename)
-    if r_match:
-        prefix = r_match.group(1)
-        eval_model = r_match.group(2)
-        refine_model_name = r_match.group(3)
-        
-        # We need to split prefix into dataset, eval_source, and eval_prompt
-        eval_prompt_type = None
-        ds_source = None
-        
-        for prompt in KNOWN_PROMPTS:
-            # Check for k-variant: _{prompt}_k\d+$
-            if re.search(fr"_{prompt}_k\d+$", prefix):
-                m = re.search(fr"_{prompt}_k\d+$", prefix)
-                eval_prompt_type = prefix[m.start()+1:]
-                ds_source = prefix[:m.start()]
-                break
-            # Check for N-variant: _{prompt}_N_\d+$
-            if re.search(fr"_{prompt}_N_\d+$", prefix):
-                m = re.search(fr"_{prompt}_N_\d+$", prefix)
-                eval_prompt_type = prefix[m.start()+1:]
-                ds_source = prefix[:m.start()]
-                break
-            # Check for standard: _{prompt}$
-            if prefix.endswith(f"_{prompt}"):
-                eval_prompt_type = prompt
-                ds_source = prefix[:-len(prompt)-1]
-                break
-        
-        if eval_prompt_type and ds_source:
-            # Split ds_source into dataset and source
-            dataset = None
-            code_gen_model = None
-            
-            for known_ds in KNOWN_DATASETS_UNDERSCORE:
-                if ds_source.startswith(known_ds + "_"):
-                    dataset = known_ds
-                    code_gen_model = ds_source[len(known_ds)+1:]
-                    break
-            
-            if not dataset and '_' in ds_source:
-                dataset_split = ds_source.split('_', 1)
-                dataset = dataset_split[0]
-                code_gen_model = dataset_split[1]
-            
-            if dataset and code_gen_model:
-                # Construct special code_gen_model name for the cache path
-                specialized_gen_model = f"{refine_model_name}_refine_{code_gen_model}_{eval_prompt_type}_{eval_model}"
-                return dataset, specialized_gen_model, None, None
+             if dataset and code_gen_model:
+                return dataset, code_gen_model, eval_model, eval_prompt_type
 
-    # Fallback to generic code generation pattern if no eval pattern matched
+    # 4. Try reconstruction pattern
+    # Format: {dataset}_{eval_source}_prompt_suffix_reconstruct_{reconstruct_model}_{start}_{end}_results.jsonl
+    reconstruct_match = re.search(r'(.+?)_reconstruct_(.+?)_\d+_\d+_results\.jsonl$', basename)
+    if reconstruct_match:
+        reconstruct_model = reconstruct_match.group(2)
+        # prefix is: {dataset}_{eval_source}_{eval_prompt}{l_suffix}
+        prefix = reconstruct_match.group(1)
+        
+        # We need to split prefix into (dataset_source) and (eval_prompt)
+        # Note: eval_prompt here is the prompt that was USED to generate the explanation being reconstructed from.
+        for prompt in KNOWN_PROMPTS:
+            # Check for _{prompt}_ or ends with _{prompt}
+            pattern = fr"_{prompt}(_L\d+)?(_N_\d+)?(_k\d+)?$"
+            m = re.search(pattern, prefix)
+            if m:
+                ds_source = prefix[:m.start()]
+                eval_prompt_type = prefix[m.start()+1:] # e.g. hire_explainer_L5
+                
+                # Split ds_source into dataset and source
+                dataset, code_gen_model = parse_ds_source(ds_source)
+                
+                if dataset and code_gen_model:
+                    # We store "reconstruct_{reconstruct_model}" as eval_model and "reconstruct_{eval_prompt}" as prompt type
+                    return dataset, code_gen_model, f"reconstruct_{reconstruct_model}", f"reconstruct_{eval_prompt_type}"
+
+    # 5. Try compare pattern
+    # Format: {dataset}_{eval_source}_{eval_prompt}{l_suffix}_compare_{model_name_part}_{start}_{end}_results.jsonl
+    compare_match = re.search(r'(.+?)_compare_(.+?)_\d+_\d+_results\.jsonl$', basename)
+    if compare_match:
+        model_name_part = compare_match.group(2)
+        prefix = compare_match.group(1)
+        for prompt in KNOWN_PROMPTS:
+            pattern = fr"_{prompt}(_L\d+)?(_N_\d+)?(_k\d+)?$"
+            m = re.search(pattern, prefix)
+            if m:
+                ds_source = prefix[:m.start()]
+                eval_prompt_type = prefix[m.start()+1:]
+                dataset, code_gen_model = parse_ds_source(ds_source)
+                if dataset and code_gen_model:
+                    return dataset, code_gen_model, model_name_part, f"{eval_prompt_type}_compare"
+
+    # 6. Try update pattern
+    # Format: {dataset}_{eval_source}_{eval_prompt}{l_suffix}_update_{model_name_part}_{start}_{end}_results.jsonl
+    update_match = re.search(r'(.+?)_update_(.+?)_\d+_\d+_results\.jsonl$', basename)
+    if update_match:
+        model_name_part = update_match.group(2)
+        prefix = update_match.group(1)
+        for prompt in KNOWN_PROMPTS:
+            pattern = fr"_{prompt}(_L\d+)?(_N_\d+)?(_k\d+)?$"
+            m = re.search(pattern, prefix)
+            if m:
+                ds_source = prefix[:m.start()]
+                eval_prompt_type = prefix[m.start()+1:]
+                dataset, code_gen_model = parse_ds_source(ds_source)
+                if dataset and code_gen_model:
+                    return dataset, code_gen_model, model_name_part, f"{eval_prompt_type}_update"
+
+    # 7. Try direct_update pattern
+    # Format: {dataset}_{eval_source}_{eval_prompt}{l_suffix}_direct_update_{model_name_part}_{start}_{end}_results.jsonl
+    direct_update_match = re.search(r'(.+?)_direct_update_(.+?)_\d+_\d+_results\.jsonl$', basename)
+    if direct_update_match:
+        model_name_part = direct_update_match.group(2)
+        prefix = direct_update_match.group(1)
+        for prompt in KNOWN_PROMPTS:
+            pattern = fr"_{prompt}(_L\d+)?(_N_\d+)?(_k\d+)?$"
+            m = re.search(pattern, prefix)
+            if m:
+                ds_source = prefix[:m.start()]
+                eval_prompt_type = prefix[m.start()+1:]
+                dataset, code_gen_model = parse_ds_source(ds_source)
+                if dataset and code_gen_model:
+                    return dataset, code_gen_model, model_name_part, f"{eval_prompt_type}_direct_update"
+
+    # 8. Try self_refine pattern
+    # Format: {dataset}_{eval_source}_{eval_prompt}{l_suffix}_self_refine_{model_name_part}_{start}_{end}_results.jsonl
+    self_refine_match = re.search(r'(.+?)_self_refine_(.+?)_\d+_\d+_results\.jsonl$', basename)
+    if self_refine_match:
+        model_name_part = self_refine_match.group(2)
+        prefix = self_refine_match.group(1)
+        for prompt in KNOWN_PROMPTS:
+            pattern = fr"_{prompt}(_L\d+)?(_N_\d+)?(_k\d+)?$"
+            m = re.search(pattern, prefix)
+            if m:
+                ds_source = prefix[:m.start()]
+                eval_prompt_type = prefix[m.start()+1:]
+                dataset, code_gen_model = parse_ds_source(ds_source)
+                if dataset and code_gen_model:
+                    return dataset, code_gen_model, model_name_part, f"{eval_prompt_type}_self_refine"
+
+    # 8. Fallback to generic code generation pattern if no eval pattern matched
     code_pattern = r'(.+?)_\d+_\d+_results\.jsonl'
     match = re.match(code_pattern, basename)
     
@@ -377,19 +489,7 @@ def parse_filename_metadata(results_file: str):
         prefix = match.group(1) # dataset_model
         
         # Split prefix into dataset and source
-        dataset = None
-        code_gen_model = None
-        
-        for known_ds in KNOWN_DATASETS_UNDERSCORE:
-            if prefix.startswith(known_ds + "_"):
-                dataset = known_ds
-                code_gen_model = prefix[len(known_ds)+1:]
-                break
-        
-        if not dataset and '_' in prefix:
-            dataset_split = prefix.split('_', 1)
-            dataset = dataset_split[0]
-            code_gen_model = dataset_split[1]
+        dataset, code_gen_model = parse_ds_source(prefix)
         
         if dataset and code_gen_model:
             if code_gen_model.startswith("code_model_"):

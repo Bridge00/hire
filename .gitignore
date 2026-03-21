@@ -15,3 +15,10 @@ data/APPS.tar.gz
 /tests
 /batch_jobs_perturb
 /batch_jobs_refine
+/batch_jobs_compare
+/batch_jobs_direct_update
+/batch_jobs_reconstruct
+/batch_jobs_self_refine
+/batch_jobs_update
+/tmp_tests
+/tmp

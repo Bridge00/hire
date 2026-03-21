@@ -13,7 +13,11 @@ import tiktoken
 def count_tokens(text: str, model: str = "gpt-4o-mini") -> int:
     """Counts the number of tokens in a text using tiktoken."""
     try:
-        encoding = tiktoken.encoding_for_model(model)
+        # GPT-5 and GPT-4o family use o200k_base
+        if "gpt-5" in model or "gpt-4o" in model:
+            encoding = tiktoken.get_encoding("o200k_base")
+        else:
+            encoding = tiktoken.encoding_for_model(model)
     except KeyError:
         encoding = tiktoken.get_encoding("o200k_base") # Fallback for unknown models (o200k is used by gpt-4o family)
     return len(encoding.encode(text or ""))
@@ -101,18 +105,26 @@ def calculate_metrics(results: Dict[str, Any]) -> Dict[str, float]:
     return rank_metrics(llm_scores, exec_scores)
 
 
-def create_results_dataframe(dataset: str, code_gen_model: str, eval_model: str = None, 
+def create_results_dataframe(dataset: str, 
+                              code_gen_model: str, 
+                              eval_model: str = None, 
                               evaluation_method: str = None, 
-                              seed: int = 95, N = 3) -> pd.DataFrame:
+                              lambda_val: int = None,
+                              seed: int = 95, N = 3,
+                              checker_model: str = None,
+                              explainer_model: str = None) -> pd.DataFrame:
     """
     Creates a pandas DataFrame combining execution results and LLM evaluations.
     
     Args:
         dataset: Name of the dataset (e.g., 'leetcode', 'humaneval')
         code_gen_model: Model used to generate code (e.g., 'gpt-4o-mini')
-        eval_model: Model used for LLM evaluation (optional)
+        eval_model: Legacy model name used for LLM evaluation (backward compatibility)
         evaluation_method: Evaluation method ('vanilla', 'codejudge', or None for execution-only)
+        lambda_val: Lambda value for controllable strictness (optional)
         seed: Random seed used in the experiment
+        checker_model: Model used for the checking stage
+        explainer_model: Source model for dependencies like explanations/pseudocode (defaults to eval_model)
         
     Returns:
         DataFrame with columns: task_id, prompt, generated_code, state, feedback, pass_rate,
@@ -170,6 +182,18 @@ def create_results_dataframe(dataset: str, code_gen_model: str, eval_model: str 
     rows = []
     cache_dir = os.getenv("CACHE_DIR", ".cache")
     
+    # Determine explainer and checker models
+    explainer_to_use = explainer_model or eval_model
+    checker_to_use = checker_model or eval_model
+    
+    if explainer_model and checker_model:
+        model_folder = f"{explainer_model}_{checker_model}"
+    elif checker_model and eval_model:
+        # Backward compatibility for (eval_model='gpt-4o-mini', checker_model='qwen')
+        model_folder = f"{eval_model}_{checker_model}"
+    else:
+        model_folder = checker_to_use
+    
     for result in exec_data_results:
         task_id = result['task_id']
         sanitized_task_id = _sanitize_filename(task_id)
@@ -198,29 +222,58 @@ def create_results_dataframe(dataset: str, code_gen_model: str, eval_model: str 
         # Retrieve LLM evaluation from cache if evaluation_method is specified
         if evaluation_method and eval_model:
             vanilla_k_match = re.match(r"vanilla_(\d+)", evaluation_method)
+            is_explanation_variant = "behavior_comparison_explanation" in evaluation_method or "two_phase_reflective_explanation" in evaluation_method
             
-            if evaluation_method == 'vanilla':
-                # Get vanilla evaluation from structured cache
-                # Path: dataset/code_gen_model/eval_model/vanilla/task_id.json
-                cache_path = os.path.join(cache_dir, dataset, code_gen_model, eval_model, evaluation_method, f"{task_id}.json")
+            if evaluation_method in ['vanilla', 'vanilla_no_reasoning', 'behavior_comparison', 'two_phase_reflective'] or is_explanation_variant:
+                # Construct folder name
+                folder_name = evaluation_method
+                if lambda_val is not None and "explanation" in evaluation_method:
+                    if "_lambda" not in folder_name:
+                        folder_name = f"{folder_name}_lambda"
+                    folder_name = f"{folder_name}_L{lambda_val}"
+
+                # Get evaluation from structured cache
+                # Path: dataset/code_gen_model/model_folder/prompt/task_id.json
+                cache_path = os.path.join(cache_dir, dataset, code_gen_model, model_folder, folder_name, f"{sanitized_task_id}.json")
                 
                 if os.path.exists(cache_path):
                     with open(cache_path, 'r', encoding='utf-8') as f:
                         cached = json.load(f)
-                        row['vanilla'] = cached.get('content', '')
-                        verdict_pos_start = row['vanilla'].find('"correct": ') + len('"correct": ')
-                        verdict_pos_end = row['vanilla'].find(',', verdict_pos_start)
+                        content = cached.get('content', '')
+                        row[folder_name] = content
                         
-                        verdict = row['vanilla'][verdict_pos_start:verdict_pos_end]
-                        row["vanilla"] = "Yes" if verdict.lower() == 'true' else "No"
+                        content_lower = content.lower()
+                        
+                        # Handle JSON-based verdict for all these baselines
+                        v_match = re.search(r'"correct":\s*(true|false|"yes"|"no"|1|0)', content_lower)
+                        if v_match:
+                            val = v_match.group(1).strip('"')
+                            verdict = "Yes" if val in ['true', 'yes', '1'] else "No"
+                            row[evaluation_method] = verdict # Backward compatibility for vanilla
+                            if evaluation_method != 'vanilla':
+                                row[f"{evaluation_method}_verdict"] = verdict
+                        else:
+                            # Fallback for plain text if JSON-like structure is missing
+                            if "correct: yes" in content_lower or "verdict: yes" in content_lower:
+                                verdict = "Yes"
+                            elif "correct: no" in content_lower or "verdict: no" in content_lower:
+                                verdict = "No"
+                            else:
+                                verdict = None
+                            
+                            if verdict:
+                                if evaluation_method == 'vanilla':
+                                    row["vanilla"] = verdict
+                                else:
+                                    row[f"{evaluation_method}_verdict"] = verdict
                 else:
-                    row['vanilla'] = None
+                    row[folder_name] = None
             elif vanilla_k_match:
                 k = int(vanilla_k_match.group(1))
                 scores = []
                 for j in range(1, k + 1):
                     # Cache prompt type used in generate_batch.py was f"vanilla_k{j}"
-                    cache_path = os.path.join(cache_dir, dataset, code_gen_model, eval_model, f"vanilla_k{j}", f"{task_id}.json")
+                    cache_path = os.path.join(cache_dir, dataset, code_gen_model, model_folder, f"vanilla_k{j}", f"{sanitized_task_id}.json")
                     if os.path.exists(cache_path):
                         with open(cache_path, 'r', encoding='utf-8') as f:
                             cached = json.load(f)
@@ -238,12 +291,15 @@ def create_results_dataframe(dataset: str, code_gen_model: str, eval_model: str 
                 # Path: dataset/code_gen_model/eval_model/cj_analysis/task_id.json
                 
                 for step in ['cj_analysis', 'cj_summary']:
-                    cache_path = os.path.join(cache_dir, dataset, code_gen_model, eval_model, step, f"{task_id}.json")
+                    cache_path = os.path.join(cache_dir, dataset, code_gen_model, model_folder, step, f"{sanitized_task_id}.json")
                     
                     if os.path.exists(cache_path):
                         with open(cache_path, 'r', encoding='utf-8') as f:
                             cached = json.load(f)
-                            row[step] = cached.get('content', '')
+                            content = cached.get('content', '')
+                            if step == 'cj_summary' and content:
+                                content = content.strip().rstrip('.')
+                            row[step] = content
                     else:
                         row[step] = None
                 
@@ -251,13 +307,23 @@ def create_results_dataframe(dataset: str, code_gen_model: str, eval_model: str 
             elif "explainer" in evaluation_method:
                 # hire_explainer, hire_explainer_query_aware, hire_explainer_checker, hire_explainer_checker_query_aware
                 # These prompts do NOT use the _N_ suffix in the structured cache
-                cache_path = os.path.join(cache_dir, dataset, code_gen_model, eval_model, evaluation_method, f"{sanitized_task_id}.json")
+                
+                # Construct folder name considering lambda
+                folder_name = evaluation_method
+                if lambda_val is not None:
+                    # Handle the _lambda suffix if it's missing from the method name
+                    if "_lambda" not in folder_name:
+                        folder_name = folder_name + "_lambda"
+                    
+                    folder_name = f"{folder_name}_L{lambda_val}"
+                
+                cache_path = os.path.join(cache_dir, dataset, code_gen_model, model_folder, folder_name, f"{sanitized_task_id}.json")
                 
                 if os.path.exists(cache_path):
                     with open(cache_path, 'r', encoding='utf-8') as f:
                         cached = json.load(f)
                         content = cached.get('content', '')
-                        row[evaluation_method] = content
+                        row[folder_name] = content
                         
                         if "checker" in evaluation_method:
                             # Parse verdict using standard HIRE JSON parsing
@@ -269,23 +335,106 @@ def create_results_dataframe(dataset: str, code_gen_model: str, eval_model: str 
                                     if v_end == -1:
                                         v_end = content.find('}', v_start)
                                     
-                                    val_str = content[v_start:v_end].strip().lower()
-                                    verdict = "Yes" if val_str == "true" else "No"
+                                    val_str = content[v_start:v_end].strip().strip('"').lower()
+                                    verdict = "Yes" if val_str in ["true", "yes", "1"] else "No"
                                     
-                                    # Column naming as requested by user
-                                    if evaluation_method == "hire_explainer_checker":
-                                        row["hire_explainer_verdict"] = verdict
-                                    elif evaluation_method == "hire_explainer_checker_query_aware":
-                                        row["hire_explainer_query_aware_verdict"] = verdict
+                                    # Column naming generalized for lambda, but keeping old names for base cases
+                                    if folder_name == "hire_explainer_checker":
+                                        verdict_col = "hire_explainer_verdict"
+                                    elif folder_name == "hire_explainer_checker_query_aware":
+                                        verdict_col = "hire_explainer_query_aware_verdict"
+                                    elif "alignment_checker" in evaluation_method:
+                                        is_obj = "obj" in evaluation_method
+                                        obj_str = "_obj" if is_obj else ""
+                                        
+                                        variant_str = ""
+                                        if "faithful" in evaluation_method: variant_str += "_faithful"
+                                        elif "no_wt" in evaluation_method: variant_str += "_no_wt"
+                                        
+                                        if "direct_update" in evaluation_method: variant_str += "_direct_update"
+                                        elif "self_refine" in evaluation_method: variant_str += "_self_refine"
+                                        elif "update" in evaluation_method: variant_str += "_update"
+
+                                        if "query_aware" in evaluation_method:
+                                            base = f"hire_explainer{obj_str}_alignment_query_aware{variant_str}"
+                                        else:
+                                            base = f"hire_explainer{obj_str}_alignment{variant_str}"
+                                            
+                                        if lambda_val is not None:
+                                            verdict_col = f"{base}_lambda_L{lambda_val}_verdict"
+                                        else:
+                                            verdict_col = f"{base}_verdict"
+                                    else:
+                                        verdict_col = f"{folder_name}_verdict"
+                                    
+                                    row[verdict_col] = verdict
                             except:
                                 pass
                 else:
-                    row[evaluation_method] = None
+                    row[folder_name] = None
                     if "checker" in evaluation_method:
-                        if evaluation_method == "hire_explainer_checker":
-                            row["hire_explainer_verdict"] = None
-                        elif evaluation_method == "hire_explainer_checker_query_aware":
-                            row["hire_explainer_query_aware_verdict"] = None
+                        if folder_name == "hire_explainer_checker":
+                            verdict_col = "hire_explainer_verdict"
+                        elif folder_name == "hire_explainer_checker_query_aware":
+                            verdict_col = "hire_explainer_query_aware_verdict"
+                        else:
+                            verdict_col = f"{folder_name}_verdict"
+                        row[verdict_col] = None
+
+            elif "pseudo" in evaluation_method:
+                # hire_pseudo, hire_pseudo_query_aware, hire_pseudo_checker, hire_pseudo_checker_query_aware
+                
+                # Construct folder name
+                folder_name = evaluation_method
+                if lambda_val is not None:
+                    # Handle the _lambda suffix if it's missing from the method name
+                    if "_lambda" not in folder_name:
+                        folder_name = folder_name + "_lambda"
+                    
+                    folder_name = f"{folder_name}_L{lambda_val}"
+                
+                cache_path = os.path.join(cache_dir, dataset, code_gen_model, model_folder, folder_name, f"{sanitized_task_id}.json")
+                
+                if os.path.exists(cache_path):
+                    with open(cache_path, 'r', encoding='utf-8') as f:
+                        cached = json.load(f)
+                        content = cached.get('content', '')
+                        row[folder_name] = content
+                        
+                        if "checker" in evaluation_method:
+                            # Parse verdict using standard HIRE JSON parsing
+                            try:
+                                v_start = content.find('"correct": ')
+                                if v_start != -1:
+                                    v_start += len('"correct": ')
+                                    v_end = content.find(',', v_start)
+                                    if v_end == -1:
+                                        v_end = content.find('}', v_start)
+                                    
+                                    val_str = content[v_start:v_end].strip().strip('"').lower()
+                                    verdict = "Yes" if val_str in ["true", "yes", "1"] else "No"
+                                    
+                                    # Column naming
+                                    if folder_name == "hire_pseudo_checker":
+                                        verdict_col = "hire_pseudo_verdict"
+                                    elif folder_name == "hire_pseudo_checker_query_aware":
+                                        verdict_col = "hire_pseudo_query_aware_verdict"
+                                    else:
+                                        verdict_col = f"{folder_name}_verdict"
+                                    
+                                    row[verdict_col] = verdict
+                            except:
+                                pass
+                else:
+                    row[folder_name] = None
+                    if "checker" in evaluation_method:
+                        if folder_name == "hire_pseudo_checker":
+                            verdict_col = "hire_pseudo_verdict"
+                        elif folder_name == "hire_pseudo_checker_query_aware":
+                            verdict_col = "hire_pseudo_query_aware_verdict"
+                        else:
+                            verdict_col = f"{folder_name}_verdict"
+                        row[verdict_col] = None
 
             elif evaluation_method.startswith('hire'):
                 # HIRE Family (hire or hire_query_aware or hire_flexible)
@@ -335,9 +484,9 @@ def create_results_dataframe(dataset: str, code_gen_model: str, eval_model: str 
                         agg_prefix = "hire_aggregator_a2_aware"
                     aggregator_step = f'{agg_prefix}{base_suffix}_N_{N}'
                     steps_to_load.append(aggregator_step)
-
+                
                 for step in steps_to_load:
-                    cache_path = os.path.join(cache_dir, dataset, code_gen_model, eval_model, step, f"{sanitized_task_id}.json")
+                    cache_path = os.path.join(cache_dir, dataset, code_gen_model, model_folder, step, f"{sanitized_task_id}.json")
                     
                     if os.path.exists(cache_path):
                         with open(cache_path, 'r', encoding='utf-8') as f:
@@ -391,7 +540,7 @@ def create_results_dataframe(dataset: str, code_gen_model: str, eval_model: str 
                         step_prompt_type = f"{base_prompt_type}_step_{i}"
                         col_name = f"{base_prompt_type}_step_{i}"
                         
-                        cache_path = os.path.join(cache_dir, dataset, code_gen_model, eval_model, step_prompt_type, f"{sanitized_task_id}.json")
+                        cache_path = os.path.join(cache_dir, dataset, code_gen_model, model_folder, step_prompt_type, f"{sanitized_task_id}.json")
                         
                         if os.path.exists(cache_path):
                             found_any = True
@@ -453,7 +602,7 @@ def create_results_dataframe(dataset: str, code_gen_model: str, eval_model: str 
             
             elif evaluation_method.startswith("ice_"):
                 # ICE Evaluation (ice_correctness, ice_usefulness)
-                cache_path = os.path.join(cache_dir, dataset, code_gen_model, eval_model, evaluation_method, f"{sanitized_task_id}.json")
+                cache_path = os.path.join(cache_dir, dataset, code_gen_model, model_folder, evaluation_method, f"{sanitized_task_id}.json")
                 
                 if os.path.exists(cache_path):
                     with open(cache_path, 'r', encoding='utf-8') as f:
