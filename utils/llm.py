@@ -20,6 +20,46 @@ OPENAI_MODELS = [
     "gpt-5-mini",
 ]
 
+# Run locally on Apple Silicon GPU via mlx-lm (pip install mlx-lm).
+# Weights are pulled from the Hugging Face Hub on first use and cached locally.
+MLX_MODELS = [
+    "mlx-community/Qwen3.5-0.8B-MLX-4bit",
+    "mlx-community/Qwen3.5-4B-MLX-4bit",
+    "mlx-community/Qwen3.5-9B-4bit",
+    "mlx-community/Qwen3.5-9B-MLX-8bit",
+    "mlx-community/Qwen3.5-9B-MLX-bf16",
+]
+
+_MLX_MODEL_CACHE = {}
+
+def _load_mlx_model(model: str):
+    """Load (and cache) an MLX model/tokenizer so repeated calls don't reload weights."""
+    if model not in _MLX_MODEL_CACHE:
+        from mlx_lm import load
+        print(f"Loading MLX model '{model}' (first use only)...")
+        _MLX_MODEL_CACHE[model] = load(model)
+    return _MLX_MODEL_CACHE[model]
+
+def _get_mlx_response(sys_prompt: str, user_prompt: str, model: str) -> str:
+    from mlx_lm import generate
+    from mlx_lm.sample_utils import make_sampler
+
+    mlx_model, tokenizer = _load_mlx_model(model)
+    messages = [
+        {"role": "system", "content": sys_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+    # enable_thinking=False is ignored by chat templates that don't support it (e.g. Qwen3/3.5).
+    prompt = tokenizer.apply_chat_template(
+        messages, add_generation_prompt=True, enable_thinking=False
+    )
+    sampler = make_sampler(temp=0.0)
+    max_tokens = int(os.getenv("MLX_MAX_TOKENS", "4096"))
+    return generate(
+        mlx_model, tokenizer, prompt=prompt, max_tokens=max_tokens,
+        sampler=sampler, verbose=False,
+    )
+
 
 os.makedirs(os.getenv("CACHE_DIR"), exist_ok=True)
 
@@ -126,29 +166,33 @@ def get_llm_response(sys_prompt: str, user_prompt: str, model: str,
             return json.load(f)["content"]
 
     # Make API call
+    client = None
     if model in TOGETHER_AI_MODELS:
         from together import Together
-        client = Together() 
+        client = Together()
     elif model in OPENAI_MODELS:
         from openai import OpenAI
         client = OpenAI()
+    elif model in MLX_MODELS:
+        content = _get_mlx_response(sys_prompt, user_prompt, model)
     else:
         raise ValueError(f"Unknown model: {model}")
-        
-    response = client.chat.completions.create(
-    model=model,
-    messages=[
-        {
-            "role": "system",
-             "content": sys_prompt
-        },
-        {
-            "role": "user",
-            "content":  user_prompt
-        }
-    ]
-    )
-    content = response.choices[0].message.content
+
+    if client is not None:
+        response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {
+                "role": "system",
+                 "content": sys_prompt
+            },
+            {
+                "role": "user",
+                "content":  user_prompt
+            }
+        ]
+        )
+        content = response.choices[0].message.content
     
     # Save to structured cache if context is available
     if structured_cache_path:

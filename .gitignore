@@ -22,3 +22,4 @@ data/APPS.tar.gz
 /batch_jobs_update
 /tmp_tests
 /tmp
+/.venv
